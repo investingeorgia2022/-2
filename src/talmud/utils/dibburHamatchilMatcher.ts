@@ -1,0 +1,500 @@
+// @ts-nocheck
+// Links Rashi / Tosafot "dibbur hamatchil" openings on a Vilna PDF scan to the
+// Gemara/Mishnah words they quote. Pure logic: works on hotspot-like boxes.
+//
+// How an opening is recognised (Vilna typesetting, every tractate): see extractDibburim —
+// punctuation bounds the opening, its own typeface names the commentator. Small reference
+// markers (א, 1, 2 …) are skipped.
+
+export type DhCommentator = 'rashi' | 'tosafot';
+
+export interface DhHotspotLike {
+  id: string;
+  word: string;
+  section: string;
+  rowId: string;
+  leftPct: number;
+  topPct: number;
+  widthPct: number;
+  heightPct: number;
+  inkTopPct?: number;
+  inkHeightPct?: number;
+  isSmallMarker?: boolean;
+  /** Printed glyph height (pt) of the PDF run this word came from. */
+  glyphH?: number;
+  /** A "." or ":" is printed right after the word. */
+  stopAfter?: '.' | ':';
+  /** PDF font resource of the printed run. */
+  font?: string;
+  /** A separate geresh / gershayim printed right after the word (ר' / ק"ש). */
+  quoteAfter?: '"' | "'";
+}
+
+export interface DhLink {
+  key: string;
+  commentator: DhCommentator;
+  /** Hotspot ids of the opening words inside Rashi/Tosafot. */
+  dhIds: string[];
+  /** Hotspot ids of the quoted words in the main text. */
+  mainIds: string[];
+}
+
+/** Per-hotspot interactive role. A shared main-text word carries both sides. */
+export interface DhHotspotRole {
+  rashi?: string; // link key
+  tosafot?: string;
+  /** Word quoted by both: right half Rashi (green), left half Tosafot (bordeaux). */
+  splitWord?: boolean;
+}
+
+const NIKUD = /[\u0591-\u05C7]/g;
+const ABBREV_MARK = /["'\u05F3\u05F4\u201C\u201D\u2019]/;
+const PREFIXES = ['ו', 'ש', 'ב', 'כ', 'ל', 'מ', 'ה', 'ד'];
+
+export function normalizeHebrewWord(raw: string): string {
+  return String(raw || '')
+    .replace(NIKUD, '')
+    .replace(/[^\u05D0-\u05EA"'\u05F3\u05F4]/g, '')
+    .replace(/^["'\u05F3\u05F4]+|["'\u05F3\u05F4]+$/g, '');
+}
+
+const FINALS: Record<string, string> = { 'ך': 'כ', 'ם': 'מ', 'ן': 'נ', 'ף': 'פ', 'ץ': 'צ' };
+const plain = (w: string) => w.replace(/["'\u05F3\u05F4]/g, '').replace(/[ךםןףץ]/g, (c) => FINALS[c]);
+const plainWord = (w: string) => plain(normalizeHebrewWord(w));
+
+/** Filler words that end a quotation ("etc.") and are not looked up in the Gemara. */
+const ETC = new Set(['וכו', 'וגו', 'כו', 'וגומר', 'וכולי']);
+/** Section headings inside the commentary that are never quoted text. */
+const HEADINGS = new Set(['גמ', 'מתני', 'גמרא', 'משנה']);
+
+export function isAbbreviation(word: string): boolean {
+  const w = normalizeHebrewWord(word);
+  return ABBREV_MARK.test(w.slice(0, -1)) && plain(w).length >= 2;
+}
+
+function stripPrefixes(w: string): string[] {
+  const out = [w];
+  let cur = w;
+  for (let i = 0; i < 2 && cur.length > 3 && PREFIXES.includes(cur[0]); i++) {
+    cur = cur.slice(1);
+    out.push(cur);
+  }
+  return out;
+}
+
+/** A word cut short with a geresh: ר' (רבי), דר' (דרבי), כלומ' (כלומר). */
+function isTruncated(raw: string): boolean {
+  const s = String(raw || '').replace(NIKUD, '').replace(/[.:,;]+$/, '').trim();
+  return /['\u05F3\u2019]$/.test(s) && !ABBREV_MARK.test(s.slice(0, -1));
+}
+
+const isInternalMater = (s: string, idx: number): boolean =>
+  idx > 0 && idx < s.length - 1 && (s[idx] === 'י' || s[idx] === 'ו');
+
+/**
+ * Matches two words differing only by omitted/added internal י or ו (plene vs. defective
+ * spelling / כתיב מלא וחסר, e.g. מיטרא ↔ מטרא, לישנא ↔ לשנא, מוציאין ↔ מוצאין).
+ * Restricts skips to one side per consonant gap and requires >= 3 matched characters so
+ * distinct words (שיר ≠ שור, דובר ≠ דיבר, יום ≠ ים, אמר ≠ יאמר/אמרו) never collide.
+ */
+function matchInternalMatres(a: string, b: string): boolean {
+  if (a.length < 3 || b.length < 3) return false;
+  let i = 0;
+  let j = 0;
+  let matched = 0;
+  let gapSide: 'none' | 'a' | 'b' = 'none';
+
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      i++;
+      j++;
+      matched++;
+      gapSide = 'none';
+      continue;
+    }
+    if ((gapSide === 'none' || gapSide === 'a') && isInternalMater(a, i)) {
+      gapSide = 'a';
+      i++;
+      continue;
+    }
+    if ((gapSide === 'none' || gapSide === 'b') && isInternalMater(b, j)) {
+      gapSide = 'b';
+      j++;
+      continue;
+    }
+    return false;
+  }
+
+  while (i < a.length && isInternalMater(a, i)) i++;
+  while (j < b.length && isInternalMater(b, j)) j++;
+  return i === a.length && j === b.length && matched >= 3;
+}
+
+/** Do two single words match, ignoring nikud, final letters, up to two prefixes, and optional internal י/ו? */
+export function wordsMatch(a: string, b: string): boolean {
+  const pa = plainWord(a);
+  const pb = plainWord(b);
+  if (!pa || !pb) return false;
+  if (pa === pb) return true;
+  // ר' = רבי, דר' = דרבי: a geresh-shortened word matches the full word it begins.
+  if (isTruncated(a) && !isTruncated(b) && !isAbbreviation(b) && pb.length > pa.length && pb.startsWith(pa)) return true;
+  if (isTruncated(b) && !isTruncated(a) && !isAbbreviation(a) && pa.length > pb.length && pa.startsWith(pb)) return true;
+  // Hebrew plural -ים and Aramaic plural -ין are the same word (טובלים / טובלין).
+  const plur = (w: string) => (w.length >= 4 && /י[מנ]$/.test(w) ? w.slice(0, -1) : w);
+  if (plur(pa) === plur(pb) && plur(pa) !== pa) return true;
+  const va = stripPrefixes(pa);
+  const vb = stripPrefixes(pb);
+  // Words of two letters or more never match by substituting letters (ודומו ≠ ואומר).
+  if (va.some((x) => x.length >= 3 && vb.includes(x))) return true;
+  return va.some((x) => x.length >= 3 && vb.some((y) => y.length >= 3 && matchInternalMatres(x, y)));
+}
+
+/** Collapses letters the scans' OCR confuses (ש/ס, א/ל, ב/כ, ה/ח/ת, ד/ר/ו, י/ז/נ, מ/ם, ע/צ). */
+export function toOCRSkeleton(word: string): string {
+  return plain(String(word || ''))
+    .replace(/[^א-ת]/g, '')
+    .replace(/[שס]/g, 'S')
+    .replace(/[אל]/g, 'A')
+    .replace(/[בכ]/g, 'B')
+    .replace(/[החת]/g, 'H')
+    .replace(/[דרו]/g, 'D')
+    .replace(/[יזנ]/g, 'V')
+    .replace(/[מ]/g, 'M')
+    .replace(/[עצ]/g, 'E');
+}
+
+/** Equal skeletons (≥3 letters) match; long words (≥5) tolerate one differing letter. */
+export function isSkeletonMatch(a: string, b: string): boolean {
+  if (a.length < 3 || b.length < 3) return false;
+  // No letter may differ: a one-letter tolerance confused distinct words (ודומו ↔ ואומר).
+  return a === b;
+}
+
+/**
+ * Tries to match one DH token at main[pos]. Returns how many main words it
+ * consumed (0 = no match). Abbreviations (ראשי תיבות) like אע"פ / ק"ש consume one
+ * full main word per initial letter.
+ */
+export function matchTokenAt(token: string, main: string[], pos: number): number {
+  if (pos >= main.length) return 0;
+  if (wordsMatch(token, main[pos])) return 1;
+  return abbreviationSpan(token, main, pos);
+}
+
+/**
+ * How many full words at words[pos…] an abbreviation stands for (0 = none). The abbreviation's
+ * letters are split into consecutive pieces, each beginning one of the words: אע"פ = אף על פי,
+ * ק"ש = קריאת שמע, אדר"מ = אדר' מאיר (piece "אדר" begins the shortened אדר').
+ */
+export function abbreviationSpan(abbr: string, words: string[], pos: number): number {
+  const norm = normalizeHebrewWord(abbr);
+  if (!isAbbreviation(norm)) return 0;
+  const full = plain(norm);
+  // Pieces begin the words themselves; prefixes are written inside the abbreviation (וק"ש).
+  const variants = (w: string) => {
+    const p = plainWord(w);
+    return p ? [p] : [];
+  };
+  const fits = (letters: string, start: number, n: number): boolean => {
+    const split = (idx: number, j: number): boolean => {
+      if (j === n) return idx === letters.length;
+      const remainingWords = n - j - 1;
+      for (let len = 1; idx + len + remainingWords <= letters.length; len++) {
+        const piece = letters.slice(idx, idx + len);
+        if (variants(words[start + j]).some((v) => v.startsWith(piece)) && split(idx + len, j + 1)) return true;
+      }
+      return false;
+    };
+    return split(0, 0);
+  };
+  // An attached prefix (ואע"פ) may stand outside the expanded words.
+  const options = PREFIXES.includes(full[0]) && full.length > 2 ? [full, full.slice(1)] : [full];
+  for (const letters of options) {
+    for (let n = 2; n <= letters.length && pos + n <= words.length; n++) {
+      if (fits(letters, pos, n)) return n;
+    }
+  }
+  return 0;
+}
+
+/**
+ * Aligns a quotation with the main text starting at main[pos]. Abbreviations may appear on either
+ * side (Rashi אדר' מאיר ↔ Gemara אדר"מ). Returns the index after the last main word, or -1.
+ */
+function alignAt(tokens: string[], main: string[], pos: number): number {
+  let i = 0;
+  let p = pos;
+  while (i < tokens.length) {
+    if (p >= main.length) return -1;
+    if (wordsMatch(tokens[i], main[p])) { i++; p++; continue; }
+    const mainUsed = abbreviationSpan(tokens[i], main, p);
+    if (mainUsed) { i++; p += mainUsed; continue; }
+    const tokUsed = abbreviationSpan(main[p], tokens, i);
+    if (tokUsed) { i += tokUsed; p++; continue; }
+    return -1;
+  }
+  return p;
+}
+
+interface Token<T> { text: string; hs: T[] }
+
+/** A printed reference marker of any kind: (א) א) [א] 1 ⊙ * … — never quoted text. */
+const MARKER_ONLY = /^[\(\[]?(?:[\u05D0-\u05EA]{1,2}|\d{1,3}|[⊙◉◎⊛●○*•°†])[\)\]][.:]?$|^[\(\[](?:[\u05D0-\u05EA]{1,2}|\d{1,3})[.:]?$|^\d{1,3}[.:]?$|^[⊙◉◎⊛●○*•°†]$/;
+export function isInlineMarker(raw: string): boolean {
+  return MARKER_ONLY.test(String(raw || '').replace(NIKUD, '').replace(/[\u200e\u200f\u202a-\u202e\s]/g, ''));
+}
+/** Removes a marker glued to a word (ב)איזהו → איזהו, איזהו1 → איזהו). */
+export function stripGluedMarker(raw: string): string {
+  return String(raw || '')
+    .replace(/^[\(\[]?(?:[\u05D0-\u05EA]{1,2}|\d{1,3}|[⊙◉◎⊛●○*•°†])[\)\]]/, '')
+    .replace(/^\d{1,3}|\d{1,3}$/g, '')
+    .replace(/[\(\[](?:[\u05D0-\u05EA]{1,2}|\d{1,3})[\)\]]$/, '');
+}
+
+/**
+ * Joins words the scan printed apart around a separate quote mark: ק + " + ש → ק"ש, ר + ' → ר'.
+ * Hotspots must be in reading order.
+ */
+function toTokens<T extends DhHotspotLike>(all: T[]): Token<T>[] {
+  // Markers anywhere inside a quotation are transparent.
+  const hs = all.filter((h) => !h.isSmallMarker && !isInlineMarker(h.word) && plainWord(stripGluedMarker(h.word)));
+  const out: Token<T>[] = [];
+  for (let i = 0; i < hs.length; i++) {
+    const h = hs[i];
+    const next = hs[i + 1];
+    if (h.quoteAfter === '"' && next && next.rowId === h.rowId && plainWord(next.word).length <= 2) {
+      out.push({ text: `${normalizeHebrewWord(h.word)}"${normalizeHebrewWord(next.word)}`, hs: [h, next] });
+      i++;
+      continue;
+    }
+    const w = stripGluedMarker(h.word);
+    out.push({ text: h.quoteAfter ? `${normalizeHebrewWord(w)}'` : w, hs: [h] });
+  }
+  return out;
+}
+
+/** Orders hotspots of one section in reading order (rows top→bottom by baseline, words right→left). */
+export function readingOrder<
+  T extends Pick<DhHotspotLike, 'topPct' | 'heightPct' | 'leftPct' | 'widthPct' | 'inkTopPct' | 'inkHeightPct'>,
+>(hotspots: T[]): T[] {
+  if (hotspots.length <= 1) return [...hotspots];
+  const inkHeight = (h: T) => h.inkHeightPct ?? h.heightPct;
+  const baseline = (h: T) => (h.inkTopPct ?? h.topPct) + inkHeight(h);
+  const byBaseline = [...hotspots].sort((a, b) => baseline(a) - baseline(b));
+  const rows: Array<{ baseline: number; avgH: number; items: T[] }> = [];
+  for (const h of byBaseline) {
+    const b = baseline(h);
+    const ht = inkHeight(h);
+    const cur = rows[rows.length - 1];
+    if (cur) {
+      const tol = Math.min(Math.max(cur.avgH, ht), Math.min(cur.avgH, ht) * 1.4) * 0.5;
+      if (Math.abs(b - cur.baseline) <= tol) {
+        const n = cur.items.length;
+        cur.baseline = (cur.baseline * n + b) / (n + 1);
+        cur.avgH = (cur.avgH * n + ht) / (n + 1);
+        cur.items.push(h);
+        continue;
+      }
+    }
+    rows.push({ baseline: b, avgH: ht, items: [h] });
+  }
+  return rows.flatMap((r) =>
+    r.items.sort((a, b) => b.leftPct + b.widthPct - (a.leftPct + a.widthPct))
+  );
+}
+
+/** Most common glyph height among the given words, weighted by letters. */
+function modeHeight(words: DhHotspotLike[]): number {
+  const count = new Map<number, number>();
+  for (const h of words) {
+    if (!h.glyphH) continue;
+    const k = Math.round(h.glyphH * 10);
+    count.set(k, (count.get(k) || 0) + Math.max(1, plainWord(h.word).length));
+  }
+  let best = 0;
+  let bestN = 0;
+  for (const [k, n] of count) if (n > bestN) { best = k; bestN = n; }
+  return best / 10;
+}
+
+
+interface Piece<T> { commentator: DhCommentator; words: T[] }
+
+/** Longest opening (in words); a run cut at a line end continues on the commentator's next line. */
+export const MAX_DH_WORDS = 15;
+
+const endsWith = (w: string, ch: string) => String(w || '').trim().endsWith(ch);
+
+/**
+ * Finds every opening. Vilna typesetting rules:
+ * - An entry starts at the commentator's first word or right after its previous entry's ":";
+ *   its opening ends at the first "." (or וכו׳ / MAX_DH_WORDS).
+ * - The commentator of every word was decided upstream from the scan's text streams and
+ *   typefaces (vilnaCommentaryStreams), never from where on the page it sits.
+ */
+export function extractDibburim<T extends DhHotspotLike>(hotspots: T[]): Piece<T>[] {
+  const raw: Array<Piece<T>> = [];
+  for (const sec of ['rashi', 'tosafot'] as const) {
+    // Punctuation alone bounds an opening.
+    const words = readingOrder(
+      hotspots.filter((h) => (h.isSmallMarker || plainWord(h.word)) && h.section === sec)
+    );
+    let open = true;
+    let cur: Piece<T> | null = null;
+    // An opening is only real once its closing "." (or וכו׳) is printed.
+    const drop = () => {
+      if (cur) raw.splice(raw.indexOf(cur), 1);
+      cur = null;
+    };
+    for (const w of words) {
+      const colonMark = w.stopAfter === ':' || endsWith(w.word, ':');
+      if (w.isSmallMarker || isInlineMarker(w.word)) {
+        // A marker before ":" still closes the entry; the next word opens a new one.
+        if (colonMark) { drop(); open = true; }
+        continue;
+      }
+      const p = plainWord(w.word);
+      const colon = colonMark;
+      const dot = w.stopAfter === '.' || endsWith(w.word, '.');
+      if (open && !HEADINGS.has(p)) {
+        if (!cur) {
+          cur = { commentator: sec, words: [] };
+          raw.push(cur);
+        }
+        cur.words.push(w);
+        if (dot || ETC.has(p)) { open = false; cur = null; }
+        else if (cur.words.length >= MAX_DH_WORDS) { drop(); open = false; }
+      }
+      if (colon) {
+        drop();
+        open = true;
+      }
+    }
+    drop();
+  }
+
+  return raw;
+}
+
+function findInMain(
+  tokens: string[],
+  main: string[],
+  from: number,
+  claimed: Set<number>
+): { start: number; end: number } | null {
+  if (tokens.length === 0) return null;
+  const free = (a: number, b: number) => {
+    for (let i = a; i <= b; i++) if (claimed.has(i)) return false;
+    return true;
+  };
+  const search = (startAt: number) => {
+    for (let s = startAt; s < main.length; s++) {
+      if (claimed.has(s)) continue;
+      const p = alignAt(tokens, main, s);
+      // Words already quoted by this commentator's earlier opening are never taken again.
+      if (p > s && free(s, p - 1)) return { start: s, end: p - 1 };
+    }
+    return null;
+  };
+  return search(Math.max(0, from - 3)) || (from > 3 ? search(0) : null);
+}
+
+function free(a: number, b: number, set: Set<number>): boolean {
+  for (let i = a; i <= b; i++) if (set.has(i)) return false;
+  return true;
+}
+
+/** Builds Rashi/Tosafot ↔ main-text links for one page. */
+export function buildDibburHamatchilLinks<T extends DhHotspotLike>(hotspots: T[]): {
+  links: DhLink[];
+  roles: Map<string, DhHotspotRole>;
+} {
+  const mainAll = hotspots.filter(
+    (h) => (h.section === 'gemara' || h.section === 'mishnah') && !h.isSmallMarker && plainWord(h.word)
+  );
+  // Small inline citations such as (דף ג.) are not part of the quoted text.
+  const mainH = modeHeight(mainAll);
+  const main = toTokens(readingOrder(mainAll.filter((h) => !mainH || !h.glyphH || h.glyphH >= mainH * 0.8)));
+  const mainWords = main.map((t) => t.text);
+  const links: DhLink[] = [];
+  const roles = new Map<string, DhHotspotRole>();
+  const cursor: Record<DhCommentator, number> = { rashi: 0, tosafot: 0 };
+  const counter: Record<DhCommentator, number> = { rashi: 0, tosafot: 0 };
+
+  // Word-level state: each commentator claims main words independently. Rashi links first,
+  // so Tosafot can join (split half/half) but never steal its own earlier claims.
+  const claimed: Record<DhCommentator, Set<number>> = { rashi: new Set(), tosafot: new Set() };
+  const spans: Array<{ key: string; start: number; end: number }> = [];
+  const pieces = extractDibburim(hotspots);
+  const ordered = [...pieces.filter((p) => p.commentator === 'rashi'), ...pieces.filter((p) => p.commentator === 'tosafot')];
+  for (const piece of ordered) {
+    const hasEtc = piece.words.some((h) => ETC.has(plainWord(h.word)));
+    const words = piece.words.filter((h) => {
+      const p = plainWord(h.word);
+      return p && !ETC.has(p) && !HEADINGS.has(p);
+    });
+    if (words.length === 0) continue;
+    const toks = toTokens(words);
+    let found: { start: number; end: number } | null = null;
+    // The quotation always begins with the opening's first word — never from its middle or end.
+    // One-word openings quote one word; longer ones need at least two matching words.
+    const minK = toks.length === 1 ? 1 : 2;
+    for (let k = toks.length; k >= minK; k--) {
+      if (k === 1 && plainWord(toks[0].text).length < 2) break;
+      found = findInMain(toks.slice(0, k).map((t) => t.text), mainWords, cursor[piece.commentator], claimed[piece.commentator]);
+      if (found) break;
+    }
+    // An abbreviation at the opening's start (קמ״ל ↔ קא משמע לן) may not align with the main text:
+    // set it aside and match the words that follow it.
+    if (!found) {
+      const abbr = toks.findIndex((t) => /["'״׳]/.test(t.text));
+      const rest = abbr >= 0 && abbr < 2 ? toks.slice(abbr + 1).map((t) => t.text) : [];
+      for (let k = rest.length; k >= 2 && !found; k--) {
+        found = findInMain(rest.slice(0, k), mainWords, cursor[piece.commentator], claimed[piece.commentator]);
+      }
+    }
+    const key = `${piece.commentator}:${counter[piece.commentator]++}`;
+    if (!found) {
+      // Still an opening: colour it in its column even when the quotation is not on this page.
+      for (const h of piece.words) {
+        if (h.section === 'rashi' || h.section === 'tosafot') {
+          roles.set(h.id, { [piece.commentator]: key });
+        }
+      }
+      continue;
+    }
+    // Commentaries follow the text in order: an identical later quote binds to the next occurrence.
+    cursor[piece.commentator] = found.start + 1;
+    // וכו׳: a Tosafot opening that starts where a longer Rashi quotation starts quotes all of it.
+    if (piece.commentator === 'tosafot' && hasEtc) {
+      const r = spans.find((x) => x.start === found!.start && x.end > found!.end);
+      if (r && free(found.start, r.end, claimed.tosafot)) found = { start: found.start, end: r.end };
+    }
+    for (let i = found.start; i <= found.end; i++) claimed[piece.commentator].add(i);
+    if (piece.commentator === 'rashi') spans.push({ key, start: found.start, end: found.end });
+    const link: DhLink = {
+      key,
+      commentator: piece.commentator,
+      dhIds: piece.words.map((h) => h.id),
+      mainIds: main.slice(found.start, found.end + 1).flatMap((t) => t.hs.map((h) => h.id)),
+    };
+    links.push(link);
+    for (const id of link.dhIds) roles.set(id, { [piece.commentator]: key });
+  }
+
+  // Main-text roles: Rashi green, Tosafot bordeaux, words quoted by both are split in half.
+  for (const l of links) {
+    for (const id of l.mainIds) {
+      const r: DhHotspotRole = { ...(roles.get(id) || {}) };
+      if (!r[l.commentator]) r[l.commentator] = l.key;
+      if (r.rashi && r.tosafot) r.splitWord = true;
+      roles.set(id, r);
+    }
+  }
+  return { links, roles };
+}
+
+/** For a split word, which side was tapped? RTL: right half = Rashi. */
+export function splitSideAt(clientX: number, rect: { left: number; width: number }): DhCommentator {
+  return clientX >= rect.left + rect.width / 2 ? 'rashi' : 'tosafot';
+}

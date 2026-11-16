@@ -1,0 +1,44 @@
+# Reference fixes
+- [x] Detect isolated Vilna markers, including ⦸, superscript ד and ב(.
+- [x] Restore canvas rendering and tint only marker ink.
+- [x] Navigate to actual commentary coordinates without competing scrolls.
+- [x] Run marker/scroll tests and verify the PDF flow.
+- [x] Stop marking letters inside abbreviations (ויקרא כ"ב) blue.
+- [x] Jump to the correct side column (amud A/B layout) and the matching entry.
+- [x] Detect side columns per scan (Berakhot vs Taanit scale).
+- [x] Open the daf directly instead of the Torah realm.
+- [x] Recognize missed split markers and reject ordinary small commentary letters.
+- [x] Navigate on one touch and resolve each Torah Or numeral to its own quotation.
+- [x] Simplify dedication banner/dialog and prevent toolbar overlap.
+- [x] Consolidate study-center controls and make mobile labels readable.
+- [x] Run regression tests and verify the updated flows on phone and desktop.
+- [x] Resolve Bach and Gilyon to their actual notes, not unrelated margin text.
+- [x] Make adjacent markers independently tappable.
+- [x] Open biblical citations as verses and point explanation windows to their selected words.
+- [x] Verify screenshot examples and run regression tests.
+- [x] Expand the biblical verse window with explanations and verse-specific commentaries.
+- [x] Test exact-verse connections and verify the explanation window.
+- [x] Highlight the exact destination text after reference-marker navigation.
+- [x] Polish halacha topic window (Poskim grid): layout, truncated labels, window controls.
+- [x] Polish halacha rulings list (שאלת גשמים cards) on mobile.
+- [x] Polish study center (სასწავლო ცენტრი) header, tool tabs, halacha chain.
+- [x] Stop floating sage/scroll-top buttons from overlapping content on mobile.
+- [x] Verify on 390x659 and run regression tests.
+- [x] Show marker type + number badge next to the highlighted destination text after marker navigation.
+- [x] Audit app-wide reading, settings, study and navigation flows; fix high-confidence storage and export issues found.
+- [x] Unify study surfaces, loading/error states and accessible motion without changing the printed daf.
+- [x] Verify reader, single-touch markers, settings persistence and exports on phone and desktop; run 64 regression tests.
+- [x] Prepare source-only and complete-project ZIP archives with setup instructions and inspect before delivery.
+
+## Review limits
+The audit covered the main architecture and selected live flows, not every external source or every study tool. Browser history synchronization and slow-network return restoration remain review candidates, not verified fixes. AI portability requires host-provided Gateway configuration; no credentials are exported.
+- [x] Double tap opens a word's explanation; long hold selects text with a copy/explain menu below it.
+- [x] Keep the zoomed daf centred sideways and vertically on the target after jumps.
+- [x] Gilyon HaShas jump falls back to its notes when no section heading matches.
+- [x] Match ים/ין plural endings in Rashi/Tosafot openings.
+- [x] Daf references open on tap even when the finger lands just beside the tiny printed reference.
+- [x] Long-press selection: small translucent drop handles below the line, and a cancel (✕) button.
+- [x] Reading lines stay one per column when a column widens (no double band).
+- [x] Double-tap explanation no longer also shows the copy/explain menu.
+- [x] Source window shows the cited daf's own text when its printed scan isn't bundled (no Berakhot substitute).
+- [x] Greeting and spoken voice: ordinary natural male voice, not overly deep.

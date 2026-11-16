@@ -1,0 +1,8 @@
+{
+  "name": "Talmud Bavli 3D — თალმუდ ბაბლი",
+  "description": "ინტერაქტიული თალმუდ ბაბლი კლასიკური ვილნის გვერდის სტრუქტურით (צורת הדף), ქართულ-ებრაული თარგმანით, რაშისა და თოსაფოთის კომენტარებით.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
