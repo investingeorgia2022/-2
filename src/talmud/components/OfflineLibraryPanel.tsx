@@ -112,6 +112,7 @@ export const OfflineLibraryPanel: React.FC<OfflineLibraryPanelProps> = ({
     }
 
     return () => {
+      abortControllerRef.current?.abort();
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('talmud-offline-updated', handleStorageUpdated);
@@ -219,6 +220,11 @@ export const OfflineLibraryPanel: React.FC<OfflineLibraryPanelProps> = ({
         );
         setTimeout(() => setStatusBannerMsg(null), 5000);
       }
+    } catch (err) {
+      if (!controller.signal.aborted && !(err instanceof Error && err.name === 'AbortError')) {
+        setStatusBannerMsg('ჩამოტვირთვა დროებით შეწყდა. სცადეთ ხელახლა.');
+        setTimeout(() => setStatusBannerMsg(null), 4000);
+      }
     } finally {
       setActiveProgress(null);
       abortControllerRef.current = null;
@@ -254,14 +260,22 @@ export const OfflineLibraryPanel: React.FC<OfflineLibraryPanelProps> = ({
           await downloadAndCacheDafOffline(tr, dafId, {
             translateGeorgian: true,
             source: 'pack-download',
+            signal: controller.signal,
           });
         }
       }
       await refreshStats();
-      setStatusBannerMsg(
-        'შასის ოქროს ფონდის საბაზისო პაკეტი წარმატებით შეინახა ოფლაინ წასაკითხად!'
-      );
-      setTimeout(() => setStatusBannerMsg(null), 5000);
+      if (!controller.signal.aborted) {
+        setStatusBannerMsg(
+          'შასის ოქროს ფონდის საბაზისო პაკეტი წარმატებით შეინახა ოფლაინ წასაკითხად!'
+        );
+        setTimeout(() => setStatusBannerMsg(null), 5000);
+      }
+    } catch (err) {
+      if (!controller.signal.aborted && !(err instanceof Error && err.name === 'AbortError')) {
+        setStatusBannerMsg('ჩამოტვირთვა დროებით შეწყდა. სცადეთ ხელახლა.');
+        setTimeout(() => setStatusBannerMsg(null), 4000);
+      }
     } finally {
       setActiveProgress(null);
       abortControllerRef.current = null;
@@ -355,6 +369,7 @@ export const OfflineLibraryPanel: React.FC<OfflineLibraryPanelProps> = ({
         await downloadAndCacheDafOffline(tractate, dafId, {
           translateGeorgian: includeTranslationsOnPack,
           source: 'pack-download',
+          signal: controller.signal,
         });
       }
       await refreshStats();
@@ -363,6 +378,11 @@ export const OfflineLibraryPanel: React.FC<OfflineLibraryPanelProps> = ({
           `სედერი „${targetSeder?.nameKa || sederId}“ (${uncachedTasks.length} დაფი) წარმატებით ჩამოიტვირთა ოფლაინ ბიბლიოთეკაში!`
         );
         setTimeout(() => setStatusBannerMsg(null), 5000);
+      }
+    } catch (err) {
+      if (!controller.signal.aborted && !(err instanceof Error && err.name === 'AbortError')) {
+        setStatusBannerMsg('სედერის ჩამოტვირთვა შეწყდა. სცადეთ ხელახლა.');
+        setTimeout(() => setStatusBannerMsg(null), 4000);
       }
     } finally {
       setActiveProgress(null);

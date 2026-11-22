@@ -50,6 +50,8 @@ export interface AppSettings {
   enablePdfProgressHighlight?: boolean;
   enableGemaraBoldToggle?: boolean;
   enableRashiFocusMode?: boolean;
+  enableCommentaryJumpSpotlight?: boolean;
+  enableKacunaAutoSpeak?: boolean;
 }
 
 export interface SederInfo {

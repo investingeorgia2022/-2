@@ -186,6 +186,8 @@ interface GalacticGlobeAndAiGreeterProps {
   uiLang?: UILang;
   onChangeUiLang?: (lang: UILang) => void;
   onlineCount?: number;
+  enableAutoSpeak?: boolean;
+  onToggleAutoSpeak?: () => void;
 }
 
 /**
@@ -846,6 +848,8 @@ export const GalacticGlobeAndAiGreeter: React.FC<GalacticGlobeAndAiGreeterProps>
   uiLang,
   onChangeUiLang,
   onlineCount,
+  enableAutoSpeak = false,
+  onToggleAutoSpeak,
 }) => {
   const [isMainMenuOpen, setIsMainMenuOpen] = useState<boolean>(false);
   useEffect(() => {
@@ -1400,8 +1404,12 @@ export const GalacticGlobeAndAiGreeter: React.FC<GalacticGlobeAndAiGreeterProps>
   // Unlock pending Kacuna greeting on user's very first pointer/touch interaction if autoplay was deferred
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    if (!enableAutoSpeak) {
+      pendingAutoSpeakRef.current = null;
+      return;
+    }
     const unlockAudioOnFirstGesture = (e: Event) => {
-      if (!pendingAutoSpeakRef.current || kacunaStopped) return;
+      if (!enableAutoSpeak || !pendingAutoSpeakRef.current || kacunaStopped) return;
       const target = e.target as HTMLElement | null;
       if (target?.closest('[data-kacuna-mute="true"]')) return;
       const pending = pendingAutoSpeakRef.current;
@@ -1414,10 +1422,27 @@ export const GalacticGlobeAndAiGreeter: React.FC<GalacticGlobeAndAiGreeterProps>
       window.removeEventListener('pointerdown', unlockAudioOnFirstGesture);
       window.removeEventListener('keydown', unlockAudioOnFirstGesture);
     };
-  }, [kacunaStopped, greetingInfo]);
+  }, [kacunaStopped, greetingInfo, enableAutoSpeak]);
 
   // Automatically greet with Kacuna's voice ONLY ONCE on the 3D Orbs screen ("საკმარისია ერთხელ")
   useEffect(() => {
+    if (!enableAutoSpeak) {
+      pendingAutoSpeakRef.current = null;
+      try {
+        if (kacunaAudioRef.current) {
+          kacunaAudioRef.current.pause();
+          kacunaAudioRef.current.currentTime = 0;
+          kacunaAudioRef.current = null;
+        }
+        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+          window.speechSynthesis.cancel();
+        }
+      } catch {
+        // ignore
+      }
+      setKacunaSpeaking(false);
+      return;
+    }
     if (isGlobeOpen && !kacunaStopped) {
       if (!hasKacunaGreetedOnceGlobal && !hasAutoGreetedGlobeRef.current) {
         hasKacunaGreetedOnceGlobal = true;
@@ -1428,7 +1453,7 @@ export const GalacticGlobeAndAiGreeter: React.FC<GalacticGlobeAndAiGreeterProps>
         });
       }
     }
-  }, [isGlobeOpen, kacunaStopped, greetingInfo]);
+  }, [isGlobeOpen, kacunaStopped, greetingInfo, enableAutoSpeak]);
 
   // If 5 seconds pass on the Orbs screen without any touch/click on the screen,
   // Kacuna reminds: "დაადე თითი ეკრანს და დალაგდება ბურთულები"
@@ -1454,7 +1479,7 @@ export const GalacticGlobeAndAiGreeter: React.FC<GalacticGlobeAndAiGreeterProps>
       setShowTouchScreenReminder(true);
       setKacunaMessage(`👆 ${reminderText}`);
 
-      if (!kacunaStopped) {
+      if (enableAutoSpeak && !kacunaStopped) {
         const activeAudio = kacunaAudioRef.current;
         if (activeAudio && !activeAudio.paused && !activeAudio.ended) {
           const prevEnded = activeAudio.onended;
@@ -1476,7 +1501,7 @@ export const GalacticGlobeAndAiGreeter: React.FC<GalacticGlobeAndAiGreeterProps>
         touchReminderTimerRef.current = null;
       }
     };
-  }, [isGlobeOpen, isSymmetricRingMode, kacunaStopped]);
+  }, [isGlobeOpen, isSymmetricRingMode, kacunaStopped, enableAutoSpeak]);
 
   // Pre-generate 120 spiral galaxy stars for smooth rendering
   const galaxyStars = useMemo(() => {
@@ -2226,8 +2251,9 @@ export const GalacticGlobeAndAiGreeter: React.FC<GalacticGlobeAndAiGreeterProps>
   }, [rotYaw, rotPitch, activeOrbsList]);
 
   return (
-    <AnimatePresence mode="wait">
-      {isGlobeOpen ? (
+    <>
+      <AnimatePresence mode="wait">
+        {isGlobeOpen ? (
           <motion.div
             id="galactic-globe-portal"
             ref={portalRootRef}
@@ -3602,32 +3628,35 @@ export const GalacticGlobeAndAiGreeter: React.FC<GalacticGlobeAndAiGreeterProps>
               </span>
             </motion.button>
           </div>
-          <GalacticMainMenuModal
-            isOpen={isMainMenuOpen}
-            onClose={() => setIsMainMenuOpen(false)}
-            activeRealm={activeRealm}
-            onSelectRealm={(realmId) => {
-              onSelectRealm(realmId);
-              onCloseGlobe();
-            }}
-            onOpenSettings={onOpenSettings}
-            onOpenOfflineLibrary={onOpenOfflineLibrary}
-            onOpenCascadingSelector={onOpenCascadingSelector}
-            onOpenSearchSheet={onOpenSearchSheet}
-            onOpenVoiceAi={onOpenVoiceAi}
-            onOpenExportModal={onOpenExportModal}
-            onOpenAuthModal={onOpenAuthModal}
-            onOpenDedicationModal={onOpenDedicationModal}
-            theme={theme}
-            onToggleTheme={onToggleTheme}
-            uiLang={uiLang}
-            onChangeUiLang={onChangeUiLang}
-            onlineCount={onlineCount}
-            isDark={isDark}
-          />
         </motion.div>
         </>
       )}
     </AnimatePresence>
+    <GalacticMainMenuModal
+      isOpen={isMainMenuOpen}
+      onClose={() => setIsMainMenuOpen(false)}
+      activeRealm={activeRealm}
+      onSelectRealm={(realmId) => {
+        onSelectRealm(realmId);
+        onCloseGlobe();
+      }}
+      onOpenSettings={onOpenSettings}
+      onOpenOfflineLibrary={onOpenOfflineLibrary}
+      onOpenCascadingSelector={onOpenCascadingSelector}
+      onOpenSearchSheet={onOpenSearchSheet}
+      onOpenVoiceAi={onOpenVoiceAi}
+      onOpenExportModal={onOpenExportModal}
+      onOpenAuthModal={onOpenAuthModal}
+      onOpenDedicationModal={onOpenDedicationModal}
+      theme={theme}
+      onToggleTheme={onToggleTheme}
+      uiLang={uiLang}
+      onChangeUiLang={onChangeUiLang}
+      onlineCount={onlineCount}
+      isDark={isDark}
+      kacunaAutoSpeak={enableAutoSpeak}
+      onToggleKacunaAutoSpeak={onToggleAutoSpeak}
+    />
+  </>
   );
 };

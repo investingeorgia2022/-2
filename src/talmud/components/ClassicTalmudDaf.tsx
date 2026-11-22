@@ -31,6 +31,7 @@ import {
   Activity,
   Highlighter,
   Bold,
+  Headphones,
 } from 'lucide-react';
 import {
   AnalysisMode,
@@ -55,7 +56,9 @@ import {
   TosafotDeepLinkRef,
 } from './TalmudModals';
 import { TalmudBelowDafSections } from './TalmudBelowDafSections';
-import { VilnaPdfInteractiveViewer } from './VilnaPdfInteractiveViewer';
+import { VilnaPdfInteractiveViewer, type VilnaPdfHotspot } from './VilnaPdfInteractiveViewer';
+import { DafAudioSyncPanel } from './DafAudioSyncPanel';
+import { readingOrder } from '../utils/dibburHamatchilMatcher';
 import { CrystalDiamondJumpButton, WindowsWindowControls } from './WindowsWindowControls';
 import {
   lookupSefariaRefDomAnchor,
@@ -190,6 +193,7 @@ interface ClassicTalmudDafProps {
   enablePdfProgressHighlight?: boolean;
   enableGemaraBoldToggle?: boolean;
   enableRashiFocusMode?: boolean;
+  enableCommentaryJumpSpotlight?: boolean;
 }
 
 const DAF_LAYOUT_OPTIONS: SelectOption[] = [
@@ -323,6 +327,7 @@ export const ClassicTalmudDaf: React.FC<ClassicTalmudDafProps> = React.memo(({
   enablePdfProgressHighlight = false,
   enableGemaraBoldToggle = false,
   enableRashiFocusMode = false,
+  enableCommentaryJumpSpotlight = false,
 }) => {
   const isSiddurDaf = String(dafData.tractateId || '').startsWith('Siddur_');
   const [dafLayoutMode, setDafLayoutMode] = useState<DafLayoutMode>('vilna-classic');
@@ -622,6 +627,29 @@ export const ClassicTalmudDaf: React.FC<ClassicTalmudDafProps> = React.memo(({
     setHoveredSentence(null);
   }, [dafData.tractateId, dafData.dafId]);
 
+  const [audioSyncOpen, setAudioSyncOpen] = useState(false);
+  const [audioSyncHotspots, setAudioSyncHotspots] = useState<VilnaPdfHotspot[]>([]);
+  const [audioSyncHighlightIds, setAudioSyncHighlightIds] = useState<ReadonlySet<string>>(
+    () => new Set()
+  );
+  const [audioSyncAutoScroll, setAudioSyncAutoScroll] = useState(true);
+  const audioSyncSeekHandlerRef = useRef<((hotspotId: string) => boolean) | null>(null);
+
+  const handleAudioSyncActiveChange = useCallback((ids: ReadonlySet<string>) => {
+    setAudioSyncHighlightIds(ids);
+  }, []);
+
+  const handleRegisterAudioSeek = useCallback(
+    (handler: ((hotspotId: string) => boolean) | null) => {
+      audioSyncSeekHandlerRef.current = handler;
+    },
+    []
+  );
+
+  const handleAudioSyncHotspotClick = useCallback((hotspot: VilnaPdfHotspot) => {
+    return Boolean(audioSyncSeekHandlerRef.current?.(hotspot.id));
+  }, []);
+
   const handleMarkReadingPlace = useCallback(
     (sentenceId: string) => {
       setMarkedReadingSentenceId((prev) => {
@@ -677,6 +705,54 @@ export const ClassicTalmudDaf: React.FC<ClassicTalmudDafProps> = React.memo(({
   const effectiveGemara: TalmudSentence[] = useMemo(
     () => dafData.gemara || [],
     [dafData.gemara]
+  );
+
+  const audioSyncDafExcerptHe = useMemo(() => {
+    const mainSpots = audioSyncHotspots.filter(
+      (h) => (h.section === 'mishnah' || h.section === 'gemara') && !h.isSmallMarker && h.word?.trim(),
+    );
+    if (mainSpots.length > 0) {
+      const sorted = readingOrder(mainSpots);
+      const lines: string[] = [];
+      let currentRowKey = '';
+      let currentWords: string[] = [];
+      for (const spot of sorted) {
+        const rowKey = spot.rowId || `${Math.round(spot.topPct * 2)}`;
+        const w = `${spot.word}${spot.quoteAfter ?? ''}`.trim();
+        if (!w) continue;
+        if (currentRowKey && rowKey !== currentRowKey) {
+          if (currentWords.length > 0) lines.push(currentWords.join(' '));
+          currentWords = [w];
+        } else {
+          currentWords.push(w);
+        }
+        currentRowKey = rowKey;
+      }
+      if (currentWords.length > 0) lines.push(currentWords.join(' '));
+      const joined = lines.join('\n').trim();
+      if (joined) return joined.slice(0, 10_000);
+    }
+    return [...effectiveMishnah, ...effectiveGemara]
+      .map((s) => s.hebrewText || s.hebrew)
+      .filter(Boolean)
+      .join('\n')
+      .slice(0, 10_000);
+  }, [audioSyncHotspots, effectiveMishnah, effectiveGemara]);
+
+  const audioSyncDafReferenceKa = useMemo(
+    () =>
+      [...effectiveMishnah, ...effectiveGemara]
+        .map((s, idx) => {
+          const he = (s.hebrewText || s.hebrew || '').trim();
+          const ka = (s.translationKa || s.explanationKa || '').trim();
+          if (!he && !ka) return '';
+          const tag = s.source === 'mishnah' ? 'მიშნა' : 'გემარა';
+          return ka ? `[${idx + 1} • ${tag}] ${he}\n→ ${ka}` : `[${idx + 1} • ${tag}] ${he}`;
+        })
+        .filter(Boolean)
+        .join('\n')
+        .slice(0, 12_000),
+    [effectiveMishnah, effectiveGemara]
   );
 
   const effectiveChavruta: TalmudSentence[] = useMemo(() => {
@@ -3391,6 +3467,12 @@ export const ClassicTalmudDaf: React.FC<ClassicTalmudDafProps> = React.memo(({
   // არ იყოს აწეული ზევით ან გაწეული ქვევით — დაიწყოს ზუსტად თავიდან
   useEffect(() => {
     const timer = setTimeout(() => {
+      if (
+        typeof window !== 'undefined' &&
+        (window as any).__talmudRestoringLastSessionScroll === `${dafData.tractateId}:${dafData.dafId}`
+      ) {
+        return;
+      }
       const folioAnchor = document.getElementById('talmud-daf-folio-anchor');
       if (folioAnchor) {
         if (isDafFullViewport) {
@@ -3455,13 +3537,40 @@ export const ClassicTalmudDaf: React.FC<ClassicTalmudDafProps> = React.memo(({
     const handleToggleTranslate = () => {
       toggleAutoTranslateLineMode();
     };
+    const handleToggleAudioSync = () => {
+      setAudioSyncOpen((v) => !v);
+    };
+    const handleOtherTopDrawerOpen = (e: Event) => {
+      if ((e as CustomEvent<{ open?: boolean }>).detail?.open) {
+        setAudioSyncOpen(false);
+      }
+    };
     window.addEventListener('global-talmud-bookmark-step', handleBookmarkStep);
     window.addEventListener('talmud-toggle-line-translate', handleToggleTranslate);
+    window.addEventListener('talmud-toggle-audio-sync', handleToggleAudioSync);
+    window.addEventListener('talmud-daf-search-state', handleOtherTopDrawerOpen);
+    window.addEventListener('talmud-gaze-hud-state', handleOtherTopDrawerOpen);
     return () => {
       window.removeEventListener('global-talmud-bookmark-step', handleBookmarkStep);
       window.removeEventListener('talmud-toggle-line-translate', handleToggleTranslate);
+      window.removeEventListener('talmud-toggle-audio-sync', handleToggleAudioSync);
+      window.removeEventListener('talmud-daf-search-state', handleOtherTopDrawerOpen);
+      window.removeEventListener('talmud-gaze-hud-state', handleOtherTopDrawerOpen);
     };
   }, [toggleAutoTranslateLineMode]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.dispatchEvent(new CustomEvent('talmud-audio-sync-state', { detail: { open: audioSyncOpen } }));
+  }, [audioSyncOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('talmud-audio-sync-state', { detail: { open: false } }));
+      }
+    };
+  }, []);
 
   // Requirement: Store the last read Y-position for the current daf in localStorage upon scroll-end, and add a floating button to 'Jump to Last Position' when returning to a previously viewed page.
   const lastReadStorageKey = `talmud_last_read_y_${dafData.tractateId}_${dafData.dafId}`;
@@ -3916,17 +4025,35 @@ export const ClassicTalmudDaf: React.FC<ClassicTalmudDafProps> = React.memo(({
                   }`}
                   title={
                     focusedRashiSegment
-                      ? 'რაშის ფოკუს-რეჟიმიდან გამოსვლა'
-                      : 'დააწკაპუნეთ რაშის ნებისმიერ მონაკვეთზე სკანზე ფოკუსირებისთვის'
+                      ? 'ფოკუს-რეჟიმიდან გამოსვლა'
+                      : 'დააწკაპუნეთ რაშის ან თოსაფოთის მონაკვეთზე სკანზე ფოკუსირებისთვის'
                   }
                 >
                   <Eye className="w-3 h-3 text-amber-400 shrink-0" />
                   <span className="hidden sm:inline">
-                    {focusedRashiSegment ? 'ფოკუსის მოხსნა' : 'რაშის ფოკუსი'}
+                    {focusedRashiSegment ? 'ფოკუსის მოხსნა' : 'ფოკუს-რეჟიმი'}
                   </span>
                   {focusedRashiSegment && <X className="w-3 h-3 shrink-0" />}
                 </button>
               )}
+
+              {/* 8. Talmud Audio Sync Panel Toggle */}
+              <button
+                type="button"
+                aria-pressed={audioSyncOpen}
+                onClick={() => setAudioSyncOpen((v) => !v)}
+                className={`h-7 px-2 rounded-lg border text-[10px] font-extrabold flex items-center gap-1 cursor-pointer transition-all ${
+                  audioSyncOpen
+                    ? 'bg-[#B45309] text-[#FAF5EB] border-amber-300 shadow-xs'
+                    : isDark
+                      ? 'bg-[#2D1C12] hover:bg-[#3D271A] border-[#C49A6C]/45 text-[#FAF5EB]'
+                      : 'bg-[#EFE3CA] hover:bg-[#E5D4B5] border-[#8B5A2B]/40 text-[#2C180B]'
+                }`}
+                title="აუდიო გაკვეთილის სინქრონიზაცია დაფის ტექსტთან"
+              >
+                <Headphones className="w-3 h-3 text-amber-400 shrink-0" />
+                <span className="hidden sm:inline">აუდიო სინქი</span>
+              </button>
             </>
           }
         >
@@ -3985,10 +4112,30 @@ export const ClassicTalmudDaf: React.FC<ClassicTalmudDafProps> = React.memo(({
             enableGemaraBoldToggle={enableGemaraBoldToggle}
             gemaraBoldActive={gemaraBoldActive}
             enableRashiFocusMode={enableRashiFocusMode}
+            enableCommentaryJumpSpotlight={enableCommentaryJumpSpotlight}
             focusedRashiSegmentId={focusedRashiSegment?.segmentId ?? null}
             onChangeFocusedRashiSegment={setFocusedRashiSegment}
+            audioSyncHighlightHotspotIds={audioSyncHighlightIds}
+            audioSyncAutoScroll={audioSyncAutoScroll}
+            onHotspotsExtracted={setAudioSyncHotspots}
+            onAudioSyncHotspotClick={handleAudioSyncHotspotClick}
           />
         </Talmud3DViewer>
+        <DafAudioSyncPanel
+          open={audioSyncOpen}
+          tractateId={dafData.tractateId}
+          dafId={dafData.dafId}
+          tractateNameKa={tractateNameKa}
+          dafMarkHe={dafMarkHe}
+          isDark={isDark}
+          hotspots={audioSyncHotspots}
+          dafExcerptHe={audioSyncDafExcerptHe}
+          dafReferenceKa={audioSyncDafReferenceKa}
+          onClose={() => setAudioSyncOpen(false)}
+          onActiveHighlightChange={handleAudioSyncActiveChange}
+          onAutoScrollChange={setAudioSyncAutoScroll}
+          onRegisterSeekHandler={handleRegisterAudioSeek}
+        />
         </div>
       </div>
 

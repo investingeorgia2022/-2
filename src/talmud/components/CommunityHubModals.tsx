@@ -724,33 +724,32 @@ export const TopLeftLogoInterfacesMenu: React.FC<TopLeftLogoInterfacesMenuProps>
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 z-[145] bg-black/45 backdrop-blur-xs"
+            className="fixed inset-0 z-[145] bg-slate-950/45 backdrop-blur-xs"
           />
           <motion.div
             key="logo-menu-panel"
             initial={{ opacity: 0, x: -16, y: -8, scale: 0.96 }}
             animate={{ opacity: 1, x: 0, y: 0, scale: 1 }}
             exit={{ opacity: 0, x: -16, y: -8, scale: 0.96 }}
-            transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-            className={`fixed top-[62px] sm:top-[68px] left-2 sm:left-5 z-[150] w-[calc(100vw-16px)] max-w-[390px] max-h-[85vh] overflow-y-auto rounded-3xl border-2 p-3.5 shadow-[0_24px_65px_rgba(0,0,0,0.85)] ${
-              isDark
-                ? 'bg-[#1D130C]/98 border-[#C49A6C] text-[#FAF5EB]'
-                : 'bg-[#FAF3E4]/98 border-[#5C3A21] text-[#21140B]'
-            }`}
+            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            className="crystal-window-shell fixed top-[62px] sm:top-[68px] left-2 sm:left-5 z-[150] w-[calc(100vw-16px)] max-w-[396px] max-h-[calc(100dvh-148px)] overflow-y-auto overscroll-contain rounded-3xl p-3.5"
           >
-            <div className="flex items-center justify-between border-b border-[#8B5A2B]/35 pb-2.5 mb-2.5">
-              <div>
-                <h3 className="text-xs sm:text-sm font-black">
+            <div className="crystal-window-header -mx-3.5 -mt-3.5 px-3.5 pt-3 pb-2.5 mb-3 rounded-t-3xl flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <h3 className="text-xs sm:text-sm font-black tracking-tight">
                   სასწავლო ინტერფეისების მთავარი მენიუ
                 </h3>
-                <p className="text-[10px] opacity-80">
+                <p className="text-[10px] opacity-75 truncate">
                   თანახი • თალმუდი • ჰალახის 5 სკოლა • 3D გლობუსი • კალენდარი
                 </p>
               </div>
               <button
                 type="button"
+                data-raw-btn="true"
+                data-tone="rose"
                 onClick={onClose}
-                className="p-1.5 rounded-xl border border-[#C49A6C]/45 cursor-pointer"
+                title="დახურვა"
+                className="crystal-corner-orb w-8 h-8 shrink-0 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -759,54 +758,67 @@ export const TopLeftLogoInterfacesMenu: React.FC<TopLeftLogoInterfacesMenuProps>
             {/* 1. Super-Animated Galactic 3D Globe Trigger */}
             <button
               type="button"
+              data-raw-btn="true"
+              data-tone="sky"
               onClick={() => {
                 onOpenGlobe();
                 onClose();
               }}
-              className="w-full mb-2.5 p-3 rounded-2xl border-2 border-[#FAF5EB] bg-gradient-to-r from-[#5C3A21] via-[#8B5A2B] to-[#5C3A21] text-[#FAF5EB] flex items-center justify-between gap-2 shadow-md cursor-pointer"
+              className="crystal-action-orb w-full mb-3 p-3 rounded-2xl! flex items-center justify-between gap-2.5 cursor-pointer"
             >
-              <div className="flex items-center gap-2.5 text-left">
-                <Globe className="w-5 h-5 text-[#F5DFBB] shrink-0" />
-                <div>
-                  <div className="text-xs font-black">გალაქტიკური 3D გლობუსი და ჭკვიანი AI</div>
-                  <div className="text-[10px] text-[#E8D8BE]">
+              <div className="flex items-center gap-2.5 text-left min-w-0">
+                <span className="crystal-corner-orb w-8 h-8 shrink-0" data-tone="amber">
+                  <Globe className="w-4 h-4" />
+                </span>
+                <div className="min-w-0">
+                  <div className="text-xs font-black truncate">გალაქტიკური 3D გლობუსი და ჭკვიანი AI</div>
+                  <div className="text-[10px] opacity-85 truncate">
                     მბრუნავი 3D სფერო ყველა სასწავლო კონტინენტით
                   </div>
                 </div>
               </div>
-              <Sparkles className="w-4 h-4 text-[#F5DFBB] shrink-0" />
+              <span className="crystal-corner-orb w-7 h-7 shrink-0" data-tone="sky">
+                <Sparkles className="w-3.5 h-3.5" />
+              </span>
             </button>
 
-            {/* 2. All 10 Sacred Study Interfaces */}
-            <div className="space-y-1.5">
+            {/* 2. All Sacred Study Interfaces inside recessed crystal trough */}
+            <div className="crystal-window-trough rounded-2xl p-1.5 space-y-1.5">
               {SACRED_REALMS.map((realm) => {
                 const isActive = realm.id === activeRealm;
                 return (
                   <button
                     key={realm.id}
                     type="button"
+                    data-raw-btn="true"
                     onClick={() => {
                       onSelectRealm(realm.id);
                       onClose();
                     }}
-                    className={`w-full p-2.5 rounded-2xl border text-left flex items-center justify-between gap-2 transition-all cursor-pointer ${
+                    className={`w-full p-2.5 rounded-xl border text-left flex items-center justify-between gap-2 transition-all cursor-pointer active:scale-[0.985] ${
                       isActive
-                        ? 'bg-gradient-to-r from-[#FAF5EB] via-[#E8D8BE] to-[#C49A6C] text-[#21140B] border-[#5C3A21] font-black shadow-sm'
+                        ? isDark
+                          ? 'bg-gradient-to-r from-amber-500/30 via-sky-500/20 to-amber-500/25 text-amber-100 border-amber-300/80 shadow-[0_4px_14px_rgba(245,158,11,0.28),inset_0_1px_0_rgba(255,255,255,0.25)] font-black'
+                          : 'bg-gradient-to-r from-[#FFFBEB] via-[#FEF3C7] to-[#E0F2FE] text-[#0F294A] border-amber-500/80 shadow-[0_4px_12px_rgba(180,83,9,0.18),inset_0_1px_0_rgba(255,255,255,0.95)] font-black'
                         : isDark
-                          ? 'bg-[#291B12] hover:bg-[#382518] border-[#5C3A21]/60 text-[#FAF5EB]'
-                          : 'bg-[#FFFDF8] hover:bg-[#E8D8BE] border-[#C9B38C] text-[#21140B]'
+                          ? 'bg-[#0F223D]/70 hover:bg-[#19355E]/90 border-sky-300/18 text-slate-100'
+                          : 'bg-white/75 hover:bg-white border-sky-200/80 text-[#0F294A]'
                     }`}
                   >
                     <div className="min-w-0 flex-1">
                       <div className="text-xs font-extrabold truncate">{realm.titleKa}</div>
-                      <div className="text-[10px] opacity-80 truncate">{realm.subtitleKa}</div>
+                      <div className="text-[10px] opacity-75 truncate">{realm.subtitleKa}</div>
                     </div>
                     <span
                       dir="rtl"
-                      className={`font-serif text-xs font-black px-2 py-0.5 rounded-lg shrink-0 ${
+                      className={`font-serif text-xs font-black px-2.5 py-0.5 rounded-full border shrink-0 ${
                         isActive
-                          ? 'bg-[#21140B] text-[#FAF5EB]'
-                          : 'bg-[#5C3A21]/30 text-[#C49A6C]'
+                          ? isDark
+                            ? 'bg-amber-400 text-[#0B1D36] border-amber-200'
+                            : 'bg-[#0F294A] text-amber-200 border-amber-400/70'
+                          : isDark
+                            ? 'bg-sky-950/80 text-amber-300 border-sky-300/25'
+                            : 'bg-sky-50 text-sky-900 border-sky-200'
                       }`}
                     >
                       {realm.badgeHe}
@@ -816,42 +828,52 @@ export const TopLeftLogoInterfacesMenu: React.FC<TopLeftLogoInterfacesMenuProps>
               })}
             </div>
 
-            {/* 3. Study Dedication & Registration */}
-            <div className="mt-3 pt-2.5 border-t border-[#8B5A2B]/35 grid grid-cols-2 gap-2">
+            {/* 3. Study Dedication, Auth & Quick Highlights */}
+            <div className="mt-3 pt-2.5 border-t border-amber-500/25 grid grid-cols-2 gap-2">
               <button
                 type="button"
+                data-raw-btn="true"
                 onClick={() => {
                   onOpenDedicationModal();
                   onClose();
                 }}
-                className="p-2.5 rounded-2xl border border-[#C49A6C]/50 bg-[#5C3A21]/25 hover:bg-[#5C3A21]/40 text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer"
+                className="crystal-action-orb p-2.5 rounded-2xl! text-xs font-extrabold justify-center cursor-pointer"
               >
-                <Flame className="w-4 h-4 text-amber-500 shrink-0" />
+                <span className="crystal-corner-orb w-6 h-6 shrink-0" data-tone="amber">
+                  <Flame className="w-3.5 h-3.5" />
+                </span>
                 <span className="truncate">სწავლის მიძღვნა</span>
               </button>
 
               <button
                 type="button"
+                data-raw-btn="true"
                 onClick={() => {
                   onOpenAuthModal();
                   onClose();
                 }}
-                className="p-2.5 rounded-2xl border border-[#C49A6C]/50 bg-[#5C3A21]/25 hover:bg-[#5C3A21]/40 text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer"
+                className="crystal-action-orb p-2.5 rounded-2xl! text-xs font-extrabold justify-center cursor-pointer"
               >
-                <UserPlus className="w-4 h-4 text-sky-400 shrink-0" />
+                <span className="crystal-corner-orb w-6 h-6 shrink-0" data-tone="sky">
+                  <UserPlus className="w-3.5 h-3.5" />
+                </span>
                 <span className="truncate">რეგისტრაცია / შესვლა</span>
               </button>
 
               <button
                 type="button"
+                data-raw-btn="true"
+                data-tone="amber"
                 onClick={() => {
                   onSelectRealm('yalkut-yosef');
                   onClose();
                 }}
-                className="col-span-2 p-2.5 rounded-2xl border-2 border-amber-400 bg-gradient-to-r from-[#7C3F14] via-[#9A501B] to-[#6B3510] text-[#FAF5EB] text-xs font-black flex items-center justify-center gap-2 cursor-pointer shadow-md hover:brightness-110"
+                className="crystal-action-orb col-span-2 p-2.5 rounded-2xl! text-xs font-black justify-center cursor-pointer"
               >
-                <BookOpen className="w-4 h-4 text-amber-300 shrink-0" />
-                <span dir="rtl" className="font-serif text-amber-200 font-black">
+                <span className="crystal-corner-orb w-6 h-6 shrink-0" data-tone="amber">
+                  <BookOpen className="w-3.5 h-3.5" />
+                </span>
+                <span dir="rtl" className="font-serif font-black">
                   ילקוט יוסף - קיצור שולחן ערוך
                 </span>
                 <span className="truncate">• იალკუტ იოსეფი</span>
@@ -859,14 +881,18 @@ export const TopLeftLogoInterfacesMenu: React.FC<TopLeftLogoInterfacesMenuProps>
 
               <button
                 type="button"
+                data-raw-btn="true"
+                data-tone="emerald"
                 onClick={() => {
                   onSelectRealm('daily-halakhot');
                   onClose();
                 }}
-                className="col-span-2 p-2.5 rounded-2xl border-2 border-emerald-400 bg-gradient-to-r from-[#0F5132] via-[#157347] to-[#0B3D24] text-[#FAF5EB] text-xs font-black flex items-center justify-center gap-2 cursor-pointer shadow-md hover:brightness-110"
+                className="crystal-action-orb col-span-2 p-2.5 rounded-2xl! text-xs font-black justify-center cursor-pointer"
               >
-                <Sparkles className="w-4 h-4 text-amber-300 shrink-0" />
-                <span dir="rtl" className="font-serif text-amber-200 font-black">
+                <span className="crystal-corner-orb w-6 h-6 shrink-0" data-tone="emerald">
+                  <Sparkles className="w-3.5 h-3.5" />
+                </span>
+                <span dir="rtl" className="font-serif font-black">
                   שתי הלכות בכל יום
                 </span>
                 <span className="truncate">• ყოველდღიური ორი ჰალახა</span>
@@ -874,13 +900,16 @@ export const TopLeftLogoInterfacesMenu: React.FC<TopLeftLogoInterfacesMenuProps>
 
               <button
                 type="button"
+                data-raw-btn="true"
                 onClick={() => {
                   onSelectRealm('siddur');
                   onClose();
                 }}
-                className="col-span-2 p-2.5 rounded-2xl border-2 border-amber-400/80 bg-gradient-to-r from-[#6B4226] via-[#8B5A2B] to-[#6B4226] text-[#FAF5EB] text-xs font-black flex items-center justify-center gap-2 cursor-pointer shadow-md hover:brightness-110"
+                className="crystal-action-orb col-span-2 p-2.5 rounded-2xl! text-xs font-black justify-center cursor-pointer"
               >
-                <BookOpen className="w-4 h-4 text-amber-300 shrink-0" />
+                <span className="crystal-corner-orb w-6 h-6 shrink-0" data-tone="amber">
+                  <BookOpen className="w-3.5 h-3.5" />
+                </span>
                 <span className="truncate">
                   სიდური • סידור כוונת הלב & კლასიკური (PDF დაფი)
                 </span>
@@ -888,13 +917,16 @@ export const TopLeftLogoInterfacesMenu: React.FC<TopLeftLogoInterfacesMenuProps>
 
               <button
                 type="button"
+                data-raw-btn="true"
                 onClick={() => {
                   onSelectRealm('blessings');
                   onClose();
                 }}
-                className="p-2.5 rounded-2xl border border-[#FAF5EB] bg-gradient-to-b from-[#FAF5EB] via-[#E8D8BE] to-[#C49A6C] text-[#21140B] text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer"
+                className="crystal-action-orb col-span-2 p-2.5 rounded-2xl! text-xs font-black justify-center cursor-pointer"
               >
-                <Sparkles className="w-4 h-4 shrink-0" />
+                <span className="crystal-corner-orb w-6 h-6 shrink-0" data-tone="sky">
+                  <Sparkles className="w-3.5 h-3.5" />
+                </span>
                 <span className="truncate">კურთხევები • ברכות</span>
               </button>
 
@@ -902,9 +934,11 @@ export const TopLeftLogoInterfacesMenu: React.FC<TopLeftLogoInterfacesMenuProps>
                 href="/export/Talmud-Bavli-3D.apk"
                 download="Talmud-Bavli-3D.apk"
                 onClick={onClose}
-                className="col-span-2 p-2.5 rounded-2xl border-2 border-amber-300/80 bg-gradient-to-r from-[#5C3A21] via-[#7A4E2D] to-[#5C3A21] text-[#FAF5EB] text-xs font-black flex items-center justify-center gap-2 cursor-pointer shadow-md hover:brightness-110"
+                className="crystal-action-orb col-span-2 p-2.5 rounded-2xl! text-xs font-black justify-center cursor-pointer"
               >
-                <Download className="w-4 h-4 text-amber-300 shrink-0" />
+                <span className="crystal-corner-orb w-6 h-6 shrink-0" data-tone="amber">
+                  <Download className="w-3.5 h-3.5" />
+                </span>
                 <span className="truncate">Android APK ფაილის ჩამოტვირთვა (Export APK)</span>
               </a>
             </div>

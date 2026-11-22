@@ -92,16 +92,40 @@ const tabs = [
   { id: 'chapter', label: 'თავის სრული მიშნა' },
 ] as const;
 
-function Shell({ open, onClose, children, label }) {
+function Shell({
+  open,
+  onClose,
+  children,
+  label,
+  isDark,
+}: {
+  open: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+  label: string;
+  isDark?: boolean;
+}) {
   return (
     <AnimatePresence>
       {open && (
-        <motion.div className="mg-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}>
+        <motion.div
+          className={`${isDark === true ? 'dark ' : ''}fixed inset-0 z-[400] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-[#061124]/65 backdrop-blur-md`}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+          onClick={onClose}
+        >
           <motion.div
-            role="dialog" aria-modal="true" aria-label={label}
-            className="mg-window"
-            initial={{ opacity: 0, y: 24, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 16, scale: 0.98 }}
-            transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+            role="dialog"
+            aria-modal="true"
+            aria-label={label}
+            data-crystal-mishnah-modal="true"
+            className="crystal-window-shell w-full max-w-[600px] max-h-[90dvh] sm:max-h-[min(86vh,780px)] rounded-t-[26px] sm:rounded-[28px] flex flex-col overflow-hidden select-none"
+            initial={{ opacity: 0, y: 36, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 24, scale: 0.985 }}
+            transition={{ duration: 0.34, ease: [0.16, 1, 0.3, 1] }}
             onClick={(e) => e.stopPropagation()}
           >
             {children}
@@ -112,7 +136,25 @@ function Shell({ open, onClose, children, label }) {
   );
 }
 
-export function MishnahMapModal({ open, onClose, onOpenGuide, data, tractateNameKa, dafId, mishnahPct }) {
+export function MishnahMapModal({
+  open,
+  onClose,
+  onOpenGuide,
+  data,
+  tractateNameKa,
+  dafId,
+  mishnahPct,
+  isDark,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onOpenGuide: () => void;
+  data: ReturnType<typeof useMishnahChapter>;
+  tractateNameKa: string;
+  dafId: string;
+  mishnahPct: number;
+  isDark?: boolean;
+}) {
   const listRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -125,92 +167,306 @@ export function MishnahMapModal({ open, onClose, onOpenGuide, data, tractateName
 
   const n = data.items.length || 1;
   return (
-    <Shell open={open} onClose={onClose} label="მიშნების რუკა">
-      <header className="mg-head">
-        <span className="mg-head-icon"><ScrollText className="w-5 h-5" /></span>
-        <div className="mg-head-text">
-          <h2>დაფის სარჩევი • რუკა</h2>
-          <p>{tractateNameKa} • თავი {data.chapter || '…'} • დაფი {dafId}</p>
+    <Shell open={open} onClose={onClose} label="მიშნების რუკა" isDark={isDark}>
+      <header className="crystal-window-header shrink-0 px-3 sm:px-4 pt-1.5 sm:pt-3 pb-2.5">
+        <div
+          aria-hidden="true"
+          className="sm:hidden w-8 h-1 rounded-full mx-auto mb-1.5 bg-[#0F294A]/20 dark:bg-sky-200/35"
+        />
+        <div className="flex items-center justify-between gap-2.5">
+          <span
+            aria-hidden="true"
+            data-tone="amber"
+            className="crystal-corner-orb w-9 h-9 shrink-0 pointer-events-none"
+          >
+            <ScrollText className="w-4 h-4 stroke-[2.25]" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-[14px] sm:text-base font-black tracking-tight text-[#0F294A] dark:text-slate-100 truncate">
+              დაფის სარჩევი • რუკა
+            </h2>
+            <p className="text-[11px] font-bold text-[#0F294A]/70 dark:text-sky-200/75 truncate tabular-nums">
+              {tractateNameKa} • თავი {data.chapter || '…'} • დაფი {dafId}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-raw-btn="true"
+            data-tone="rose"
+            className="crystal-corner-orb w-8 h-8 shrink-0 cursor-pointer"
+            onClick={onClose}
+            aria-label="დახურვა"
+            title="დახურვა"
+          >
+            <X className="w-3.5 h-3.5 stroke-[2.5]" />
+          </button>
         </div>
-        <button className="mg-close" onClick={onClose} aria-label="დახურვა"><X className="w-4 h-4" /></button>
       </header>
-      <div className="mg-progress">
-        <div className="mg-bar"><span style={{ width: `${mishnahPct}%` }} /></div>
-        <div className="mg-legend"><b className="mg-m">მიშნა {mishnahPct}%</b><b className="mg-g">გემარა {100 - mishnahPct}%</b></div>
+
+      <div className="flex-1 min-h-0 overflow-hidden flex flex-col gap-2.5 p-2.5 sm:p-3.5">
+        <div className="crystal-window-trough shrink-0 rounded-xl px-3 py-2 flex flex-col gap-1.5">
+          <div className="h-2 rounded-full overflow-hidden bg-[#0F294A]/15 dark:bg-[#051022]/85 border border-sky-900/10 dark:border-sky-300/20">
+            <span
+              className="block h-full rounded-full transition-all duration-500 bg-gradient-to-r from-sky-500 to-sky-600 dark:from-amber-400 dark:to-amber-500"
+              style={{ width: `${mishnahPct}%` }}
+            />
+          </div>
+          <div className="flex items-center justify-between text-[11px] font-extrabold tabular-nums">
+            <span className="text-sky-800 dark:text-amber-300">მიშნა {mishnahPct}%</span>
+            <span className="text-[#0F294A]/70 dark:text-sky-200/75">გემარა {100 - mishnahPct}%</span>
+          </div>
+        </div>
+
+        <div
+          className="flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y flex flex-col gap-2 pr-0.5 select-text"
+          ref={listRef}
+        >
+          {data.loading && (
+            <div className="flex items-center justify-center gap-2 py-6 text-xs font-bold text-[#0F294A]/70 dark:text-slate-300">
+              <Loader2 className="w-4 h-4 animate-spin" /> იტვირთება…
+            </div>
+          )}
+          {data.error && (
+            <div className="flex items-center justify-center py-4 text-xs font-bold text-rose-700 dark:text-rose-300">
+              {data.error}
+            </div>
+          )}
+          {data.items.map((it) => {
+            const current = data.currentIndices.has(it.index);
+            return (
+              <button
+                key={it.index}
+                type="button"
+                data-raw-btn="true"
+                data-mishnah={it.index}
+                data-mishnah-current={current ? 'true' : 'false'}
+                onClick={onOpenGuide}
+                className={`w-full text-start rounded-xl border p-3 sm:p-3.5 transition-all cursor-pointer active:scale-[0.99] shrink-0 ${
+                  current
+                    ? 'bg-gradient-to-r from-[#FFFBEB] via-[#FEF3C7] to-[#E0F2FE] text-[#0F294A] border-amber-500/80 shadow-[0_3px_10px_rgba(180,83,9,0.16),inset_0_1px_0_rgba(255,255,255,0.95)] dark:from-amber-500/24 dark:via-sky-500/20 dark:to-amber-500/18 dark:text-slate-100 dark:border-amber-300/75 dark:shadow-[0_3px_12px_rgba(245,158,11,0.22),inset_0_1px_0_rgba(255,255,255,0.18)]'
+                    : 'bg-white/75 hover:bg-white text-[#0F294A] border-sky-200/85 dark:bg-[#0F223D]/70 dark:hover:bg-[#19355E]/85 dark:text-slate-100 dark:border-sky-300/20'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-black text-sky-800 dark:text-amber-300">
+                    <ScrollText className="w-3.5 h-3.5 shrink-0" />
+                    მიშნა {it.index}
+                  </span>
+                  {current ? (
+                    <span className="text-[11px] font-black text-amber-800 dark:text-amber-200">
+                      მიმდინარე დაფი
+                    </span>
+                  ) : (
+                    <span className="text-[11px] font-bold tabular-nums text-[#0F294A]/60 dark:text-sky-200/65">
+                      ~{Math.round(((it.index - 0.5) / n) * 100)}% თავი
+                    </span>
+                  )}
+                </div>
+                <p className="mg-he text-[#0F294A] dark:text-slate-50" dir="rtl">
+                  {it.he.split(' ').slice(0, 9).join(' ')}…
+                </p>
+                {it.translationKa ? (
+                  <p className="mg-ka mg-ka-clamp mt-1 text-[#0F294A]/85 dark:text-slate-200/90">
+                    {it.translationKa}
+                  </p>
+                ) : data.aiLoading ? (
+                  <p className="mg-ka mg-ka-clamp mt-1 italic opacity-60">თარგმანი მზადდება…</p>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
       </div>
-      <div className="mg-body" ref={listRef}>
-        {data.loading && <div className="mg-status"><Loader2 className="w-4 h-4 animate-spin" /> იტვირთება…</div>}
-        {data.error && <div className="mg-status">{data.error}</div>}
-        {data.items.map((it) => {
-          const current = data.currentIndices.has(it.index);
-          return (
-            <button key={it.index} data-mishnah={it.index} className={`mg-card ${current ? 'is-current' : ''}`} onClick={onOpenGuide}>
-              <div className="mg-card-top">
-                <span className="mg-badge"><ScrollText className="w-3.5 h-3.5" /> მიშნა {it.index}</span>
-                {current ? <span className="mg-here">მიმდინარე დაფი</span> : <span className="mg-pos">~{Math.round(((it.index - 0.5) / n) * 100)}% თავი</span>}
-              </div>
-              <p className="mg-he" dir="rtl">{it.he.split(' ').slice(0, 9).join(' ')}…</p>
-              {it.translationKa ? <p className="mg-ka">{it.translationKa}</p> : data.aiLoading ? <p className="mg-ka mg-dim">თარგმანი მზადდება…</p> : null}
-            </button>
-          );
-        })}
-      </div>
-      <footer className="mg-foot">
-        <button className="mg-primary" onClick={onOpenGuide}><BookOpen className="w-4 h-4" /> მიშნის იზოლირებული მეგზურის გახსნა</button>
+
+      <footer className="crystal-window-header shrink-0 px-3 sm:px-4 py-2.5 pb-[max(10px,env(safe-area-inset-bottom))] border-t border-amber-500/25 dark:border-amber-400/20">
+        <button
+          type="button"
+          data-raw-btn="true"
+          data-tone="sky"
+          className="crystal-action-orb w-full h-10 sm:h-11 px-4 justify-center rounded-full! text-xs sm:text-sm font-black cursor-pointer"
+          onClick={onOpenGuide}
+        >
+          <BookOpen className="w-4 h-4 shrink-0" />
+          <span>მიშნის იზოლირებული მეგზურის გახსნა</span>
+        </button>
       </footer>
     </Shell>
   );
 }
 
-export function MishnahGuideModal({ open, onClose, data, tractateNameKa, tractateNameHe, dafId }) {
+export function MishnahGuideModal({
+  open,
+  onClose,
+  data,
+  tractateNameKa,
+  tractateNameHe,
+  dafId,
+  isDark,
+}: {
+  open: boolean;
+  onClose: () => void;
+  data: ReturnType<typeof useMishnahChapter>;
+  tractateNameKa: string;
+  tractateNameHe: string;
+  dafId: string;
+  isDark?: boolean;
+}) {
   const [tab, setTab] = useState<'both' | 'daf' | 'chapter'>('both');
   const dafItems = data.items.filter((i) => data.currentIndices.has(i.index));
-  const sections = tab === 'daf' ? [{ title: `მიმდინარე დაფის მიშნა (დაფი ${dafId})`, items: dafItems }]
-    : tab === 'chapter' ? [{ title: `თავი ${data.chapter} — სრული მიშნა`, items: data.items }]
-    : [{ title: `მიმდინარე დაფის მიშნა (დაფი ${dafId})`, items: dafItems }, { title: `თავი ${data.chapter} — სრული მიშნა`, items: data.items }];
+  const sections =
+    tab === 'daf'
+      ? [{ title: `მიმდინარე დაფის მიშნა (დაფი ${dafId})`, items: dafItems }]
+      : tab === 'chapter'
+        ? [{ title: `თავი ${data.chapter} — სრული მიშნა`, items: data.items }]
+        : [
+            { title: `მიმდინარე დაფის მიშნა (დაფი ${dafId})`, items: dafItems },
+            { title: `თავი ${data.chapter} — სრული მიშნა`, items: data.items },
+          ];
   return (
-    <Shell open={open} onClose={onClose} label="მიშნის მეგზური">
-      <header className="mg-head">
-        <span className="mg-head-icon"><ScrollText className="w-5 h-5" /></span>
-        <div className="mg-head-text">
-          <h2>მიმდინარე გემარის მიშნა</h2>
-          <p dir="rtl" className="mg-he-sub">משנה {tractateNameHe} • ({dafId})</p>
-        </div>
-        <button className="mg-close" onClick={onClose} aria-label="დახურვა"><X className="w-4 h-4" /></button>
-      </header>
-      <div className="mg-tabs" role="tablist">
-        {tabs.map((t) => (
-          <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? 'on' : ''} onClick={() => setTab(t.id)}>
-            {t.id === 'daf' ? `${t.label} (${dafId})` : t.label}
+    <Shell open={open} onClose={onClose} label="მიშნის მეგზური" isDark={isDark}>
+      <header className="crystal-window-header shrink-0 px-3 sm:px-4 pt-1.5 sm:pt-3 pb-2.5">
+        <div
+          aria-hidden="true"
+          className="sm:hidden w-8 h-1 rounded-full mx-auto mb-1.5 bg-[#0F294A]/20 dark:bg-sky-200/35"
+        />
+        <div className="flex items-center justify-between gap-2.5">
+          <span
+            aria-hidden="true"
+            data-tone="amber"
+            className="crystal-corner-orb w-9 h-9 shrink-0 pointer-events-none"
+          >
+            <ScrollText className="w-4 h-4 stroke-[2.25]" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-[14px] sm:text-base font-black tracking-tight text-[#0F294A] dark:text-slate-100 truncate">
+              მიმდინარე გემარის მიშნა
+            </h2>
+            <p dir="rtl" className="mg-he-sub text-sky-800 dark:text-amber-300 truncate">
+              משנה {tractateNameHe} • ({dafId})
+            </p>
+          </div>
+          <button
+            type="button"
+            data-raw-btn="true"
+            data-tone="rose"
+            className="crystal-corner-orb w-8 h-8 shrink-0 cursor-pointer"
+            onClick={onClose}
+            aria-label="დახურვა"
+            title="დახურვა"
+          >
+            <X className="w-3.5 h-3.5 stroke-[2.5]" />
           </button>
-        ))}
+        </div>
+      </header>
+
+      <div
+        className="crystal-window-trough shrink-0 mx-2.5 sm:mx-3.5 mt-2.5 rounded-full p-0.5 grid grid-cols-3 gap-0.5"
+        role="tablist"
+      >
+        {tabs.map((t) => {
+          const active = tab === t.id;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              data-raw-btn="true"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setTab(t.id)}
+              className={`h-8 px-2 rounded-full text-[11px] sm:text-xs font-extrabold leading-tight truncate cursor-pointer transition-all ${
+                active
+                  ? 'bg-gradient-to-b from-sky-500 to-sky-700 text-white shadow-xs dark:from-amber-400 dark:to-amber-600 dark:text-[#0B1D36]'
+                  : 'text-[#0F294A]/75 hover:text-[#0F294A] dark:text-slate-300 dark:hover:text-white'
+              }`}
+            >
+              {t.id === 'daf' ? `${t.label} (${dafId})` : t.label}
+            </button>
+          );
+        })}
       </div>
-      <div className="mg-body">
-        {data.loading && <div className="mg-status"><Loader2 className="w-4 h-4 animate-spin" /> იტვირთება…</div>}
+
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y p-2.5 sm:p-3.5 flex flex-col gap-3 select-text">
+        {data.loading && (
+          <div className="flex items-center justify-center gap-2 py-6 text-xs font-bold text-[#0F294A]/70 dark:text-slate-300">
+            <Loader2 className="w-4 h-4 animate-spin" /> იტვირთება…
+          </div>
+        )}
         {sections.map((s) => (
-          <section key={s.title} className="mg-section">
-            <h3 className="mg-section-title"><span />{s.title}<em>{s.items.length} მიშნა</em></h3>
-            {s.items.map((it) => (
-              <article key={s.title + it.index} className={`mg-card mg-static ${data.currentIndices.has(it.index) ? 'is-current' : ''}`}>
-                <div className="mg-card-top">
-                  <span className="mg-badge mg-badge-soft">მიშნა {it.index}</span>
-                  {it.sagesHe && <span className="mg-sages">ბრძენნი: <span dir="rtl">{it.sagesHe}</span></span>}
-                  {data.currentIndices.has(it.index) && <CheckCircle2 className="w-4 h-4 mg-check" />}
-                </div>
-                <p className="mg-he mg-he-full" dir="rtl">{it.he}</p>
-                <div className="mg-divider" />
-                {it.translationKa ? <p className="mg-ka"><b>თარგმანი: </b>{it.translationKa}</p> : <p className="mg-ka mg-dim">{data.aiLoading ? 'თარგმანი მზადდება…' : 'თარგმანი მიუწვდომელია'}</p>}
-                {it.explanationKa && (
-                  <div className="mg-explain"><h4><Lightbulb className="w-4 h-4" /> ჰალახური და კონცეპტუალური განმარტება</h4><p>{it.explanationKa}</p></div>
-                )}
-              </article>
-            ))}
+          <section key={s.title} className="flex flex-col gap-2.5">
+            <h3 className="flex items-center justify-between gap-2 pb-1.5 border-b border-sky-900/12 dark:border-amber-400/20 text-xs font-black text-sky-800 dark:text-amber-300">
+              <span>{s.title}</span>
+              <span className="text-[11px] font-bold tabular-nums opacity-75">
+                {s.items.length} მიშნა
+              </span>
+            </h3>
+            {s.items.map((it) => {
+              const current = data.currentIndices.has(it.index);
+              return (
+                <article
+                  key={s.title + it.index}
+                  className={`w-full rounded-xl border p-3.5 transition-all ${
+                    current
+                      ? 'bg-gradient-to-r from-[#FFFBEB] via-[#FEF3C7] to-[#E0F2FE] text-[#0F294A] border-amber-500/80 shadow-[0_3px_10px_rgba(180,83,9,0.16),inset_0_1px_0_rgba(255,255,255,0.95)] dark:from-amber-500/24 dark:via-sky-500/20 dark:to-amber-500/18 dark:text-slate-100 dark:border-amber-300/75 dark:shadow-[0_3px_12px_rgba(245,158,11,0.22),inset_0_1px_0_rgba(255,255,255,0.18)]'
+                      : 'bg-white/75 text-[#0F294A] border-sky-200/85 dark:bg-[#0F223D]/70 dark:text-slate-100 dark:border-sky-300/20'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-xs font-black text-sky-800 dark:text-amber-300">
+                      მიშნა {it.index}
+                    </span>
+                    {it.sagesHe && (
+                      <span className="text-[11px] font-bold text-[#0F294A]/70 dark:text-sky-200/75 min-w-0 truncate">
+                        • ბრძენნი: <span dir="rtl">{it.sagesHe}</span>
+                      </span>
+                    )}
+                    {current && (
+                      <CheckCircle2 className="w-4 h-4 ms-auto shrink-0 text-sky-700 dark:text-amber-300" />
+                    )}
+                  </div>
+                  <p className="mg-he mg-he-full text-[#0F294A] dark:text-slate-50" dir="rtl">
+                    {it.he}
+                  </p>
+                  <div className="h-px my-2.5 bg-sky-900/12 dark:bg-sky-300/15" />
+                  {it.translationKa ? (
+                    <p className="mg-ka text-[#0F294A]/90 dark:text-slate-200">
+                      <b className="text-sky-800 dark:text-amber-300">თარგმანი: </b>
+                      {it.translationKa}
+                    </p>
+                  ) : (
+                    <p className="mg-ka italic opacity-60">
+                      {data.aiLoading ? 'თარგმანი მზადდება…' : 'თარგმანი მიუწვდომელია'}
+                    </p>
+                  )}
+                  {it.explanationKa && (
+                    <div className="mt-3 rounded-xl p-3 bg-sky-50/75 border border-sky-200/85 dark:bg-[#091830]/80 dark:border-amber-400/25">
+                      <h4 className="flex items-center gap-1.5 text-xs font-black text-sky-800 dark:text-amber-300 mb-1">
+                        <Lightbulb className="w-3.5 h-3.5 shrink-0" />
+                        ჰალახური და კონცეპტუალური განმარტება
+                      </h4>
+                      <p className="text-[13px] leading-relaxed text-[#0F294A]/90 dark:text-slate-200">
+                        {it.explanationKa}
+                      </p>
+                    </div>
+                  )}
+                </article>
+              );
+            })}
           </section>
         ))}
       </div>
-      <footer className="mg-foot mg-foot-split">
-        <span>{tractateNameKa} • დაფი {dafId}</span>
-        <button className="mg-secondary" onClick={onClose}>დახურვა</button>
+
+      <footer className="crystal-window-header shrink-0 px-3 sm:px-4 py-2.5 pb-[max(10px,env(safe-area-inset-bottom))] flex items-center justify-between gap-2.5 border-t border-amber-500/25 dark:border-amber-400/20">
+        <span className="text-xs font-bold text-[#0F294A]/70 dark:text-slate-300 truncate">
+          {tractateNameKa} • დაფი {dafId}
+        </span>
+        <button
+          type="button"
+          data-raw-btn="true"
+          className="crystal-action-orb h-9 px-4 rounded-full! text-xs font-extrabold cursor-pointer shrink-0"
+          onClick={onClose}
+        >
+          დახურვა
+        </button>
       </footer>
     </Shell>
   );

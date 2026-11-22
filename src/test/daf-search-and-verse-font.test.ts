@@ -18,6 +18,24 @@ describe('daf search', () => {
   it('expands an abbreviation in the query: ק"ש finds קריאת שמע', () => {
     expect(searchDaf(spots, 'ק"ש')[0].ids).toEqual(['t0', 't1']);
   });
+  it('keeps matching immediately after typing a space and 1 letter of the next word', () => {
+    const line = ['משעת', 'צאת', 'הכוכבים'].map((w, i) => spot(`m${i}`, w, 'gemara', i));
+    expect(searchDaf(line, 'משעת צ')[0].ids).toEqual(['m0', 'm1']);
+  });
+  it('matches a prefix-attached trailing word when typing a multi-word phrase', () => {
+    const line = ['בשכבך', 'ובקומך'].map((w, i) => spot(`p${i}`, w, 'gemara', i));
+    expect(searchDaf(line, 'בשכבך בק')[0].ids).toEqual(['p0', 'p1']);
+  });
+  it('joins split quoteAfter abbreviations and matches seamlessly across mishnah and gemara sections', () => {
+    const cross = [
+      { id: 'c0', word: 'עמוד', section: 'mishnah', rowId: 'r1', topPct: 31, leftPct: 70, heightPct: 1, widthPct: 4 },
+      { id: 'c1', word: 'השחר', section: 'mishnah', rowId: 'r1', topPct: 31, leftPct: 65, heightPct: 1, widthPct: 4 },
+      { id: 'c2', word: 'א', section: 'mishnah', rowId: 'r1', topPct: 31, leftPct: 62, heightPct: 1, widthPct: 1.5, quoteAfter: '"' },
+      { id: 'c3', word: 'כ', section: 'mishnah', rowId: 'r1', topPct: 31, leftPct: 60, heightPct: 1, widthPct: 1.5 },
+      { id: 'c4', word: 'למה', section: 'gemara', rowId: 'r2', topPct: 32.2, leftPct: 70, heightPct: 1, widthPct: 4 },
+    ];
+    expect(searchDaf(cross, 'עמוד השחר א"כ למה')[0].ids).toEqual(['c0', 'c1', 'c2', 'c3', 'c4']);
+  });
 });
 
 describe('scan text repair', () => {

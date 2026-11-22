@@ -20,5 +20,7 @@ export function loadAppSettings(): AppSettings {
     enablePdfProgressHighlight: saved.enablePdfProgressHighlight ?? false,
     enableGemaraBoldToggle: saved.enableGemaraBoldToggle ?? false,
     enableRashiFocusMode: saved.enableRashiFocusMode ?? false,
+    enableCommentaryJumpSpotlight: saved.enableCommentaryJumpSpotlight ?? false,
+    enableKacunaAutoSpeak: saved.enableKacunaAutoSpeak ?? false,
   };
 }

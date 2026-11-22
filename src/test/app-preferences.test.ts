@@ -11,4 +11,14 @@ describe('saved study preferences', () => {
     localStorage.setItem('talmud_default_currency_v1', 'USD');
     expect(loadAppSettings()).toMatchObject({ uiLang: 'en', defaultCurrency: 'USD' });
   });
+  it('defaults enableKacunaAutoSpeak to false and retains explicit true', () => {
+    expect(loadAppSettings().enableKacunaAutoSpeak).toBe(false);
+    localStorage.setItem('talmud_app_settings_v2', JSON.stringify({ enableKacunaAutoSpeak: true }));
+    expect(loadAppSettings().enableKacunaAutoSpeak).toBe(true);
+  });
+  it('defaults enableCommentaryJumpSpotlight to false and retains explicit true', () => {
+    expect(loadAppSettings().enableCommentaryJumpSpotlight).toBe(false);
+    localStorage.setItem('talmud_app_settings_v2', JSON.stringify({ enableCommentaryJumpSpotlight: true }));
+    expect(loadAppSettings().enableCommentaryJumpSpotlight).toBe(true);
+  });
 });

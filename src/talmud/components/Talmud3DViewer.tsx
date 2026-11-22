@@ -29,6 +29,19 @@ export interface Talmud3DViewerProps {
   children: React.ReactNode;
 }
 
+interface SessionDafTransformState {
+  scale: number;
+  panX: number;
+  panY: number;
+  tiltX: number;
+  tiltY: number;
+  is3DTiltActive: boolean;
+  focusedAreaName: string | null;
+}
+
+// Current-session-only in-memory zoom/pan cache keyed by pageKey (`tractateId-dafId`).
+const sessionDafTransformMap = new Map<string, SessionDafTransformState>();
+
 export const Talmud3DViewer: React.FC<Talmud3DViewerProps> = ({
   pageKey,
   direction,
@@ -48,19 +61,37 @@ export const Talmud3DViewer: React.FC<Talmud3DViewerProps> = ({
   const [isToolbarMinimized, setIsToolbarMinimized] = useState<boolean>(false);
 
   // Gesture & 3D Transform State (Fixed transform-origin to eliminate content jitter during pinch-zoom & pan)
-  const [scale, setScale] = useState<number>(1);
-  const [panX, setPanX] = useState<number>(0);
-  const [panY, setPanY] = useState<number>(0);
-  const viewStateRef = useRef({ scale: 1, panX: 0, panY: 0 });
+  const initialSavedTransform = sessionDafTransformMap.get(pageKey);
+  const [scale, setScale] = useState<number>(() => initialSavedTransform?.scale ?? 1);
+  const [panX, setPanX] = useState<number>(() => initialSavedTransform?.panX ?? 0);
+  const [panY, setPanY] = useState<number>(() => initialSavedTransform?.panY ?? 0);
+  const viewStateRef = useRef({
+    scale: initialSavedTransform?.scale ?? 1,
+    panX: initialSavedTransform?.panX ?? 0,
+    panY: initialSavedTransform?.panY ?? 0,
+  });
   viewStateRef.current = { scale, panX, panY };
-  const [tiltX, setTiltX] = useState<number>(0);
-  const [tiltY, setTiltY] = useState<number>(0);
-  const [is3DTiltActive, setIs3DTiltActive] = useState<boolean>(false);
+  const [tiltX, setTiltX] = useState<number>(() => initialSavedTransform?.tiltX ?? 0);
+  const [tiltY, setTiltY] = useState<number>(() => initialSavedTransform?.tiltY ?? 0);
+  const [is3DTiltActive, setIs3DTiltActive] = useState<boolean>(
+    () => initialSavedTransform?.is3DTiltActive ?? false
+  );
   const [isPanDragEnabled, setIsPanDragEnabled] = useState<boolean>(true);
   const [isAreaZoomMode, setIsAreaZoomMode] = useState<boolean>(false);
   const [isInteracting, setIsInteracting] = useState<boolean>(false);
-  const [showResetAfterRelease, setShowResetAfterRelease] = useState<boolean>(false);
-  const [focusedAreaName, setFocusedAreaName] = useState<string | null>(null);
+  const [showResetAfterRelease, setShowResetAfterRelease] = useState<boolean>(() =>
+    initialSavedTransform
+      ? initialSavedTransform.scale > 1.02 ||
+        Math.abs(initialSavedTransform.panX) > 4 ||
+        Math.abs(initialSavedTransform.panY) > 4
+      : false
+  );
+  const [focusedAreaName, setFocusedAreaName] = useState<string | null>(
+    () => initialSavedTransform?.focusedAreaName ?? null
+  );
+  const tiltStateRef = useRef({ tiltX, tiltY, is3DTiltActive, focusedAreaName });
+  tiltStateRef.current = { tiltX, tiltY, is3DTiltActive, focusedAreaName };
+  const prevPageKeyRef = useRef<string>(pageKey);
 
   // Content bounding-box clamping helper for smooth 1:1 pan & pinch-to-zoom without jitter
   const clampPanToContentBounds = useCallback(
@@ -151,13 +182,50 @@ export const Talmud3DViewer: React.FC<Talmud3DViewerProps> = ({
     setFocusedAreaName(null);
   }, []);
 
-  // Reset zoom/pan when changing to a new Daf page
+  // Save outgoing daf's zoom/pan in session memory and restore saved state if returning to a visited daf.
   useEffect(() => {
-    resetTransform();
+    const prevKey = prevPageKeyRef.current;
+    if (prevKey !== pageKey) {
+      sessionDafTransformMap.set(prevKey, {
+        scale: viewStateRef.current.scale,
+        panX: viewStateRef.current.panX,
+        panY: viewStateRef.current.panY,
+        tiltX: tiltStateRef.current.tiltX,
+        tiltY: tiltStateRef.current.tiltY,
+        is3DTiltActive: tiltStateRef.current.is3DTiltActive,
+        focusedAreaName: tiltStateRef.current.focusedAreaName,
+      });
+      prevPageKeyRef.current = pageKey;
+      const saved = sessionDafTransformMap.get(pageKey);
+      if (saved) {
+        setScale(saved.scale);
+        setPanX(saved.panX);
+        setPanY(saved.panY);
+        setTiltX(saved.tiltX);
+        setTiltY(saved.tiltY);
+        setIs3DTiltActive(saved.is3DTiltActive);
+        setIsAreaZoomMode(false);
+        setFocusedAreaName(saved.focusedAreaName);
+        setShowResetAfterRelease(
+          saved.scale > 1.02 || Math.abs(saved.panX) > 4 || Math.abs(saved.panY) > 4
+        );
+      } else {
+        resetTransform();
+      }
+    }
   }, [pageKey, resetTransform]);
 
   useEffect(() => {
     return () => {
+      sessionDafTransformMap.set(prevPageKeyRef.current, {
+        scale: viewStateRef.current.scale,
+        panX: viewStateRef.current.panX,
+        panY: viewStateRef.current.panY,
+        tiltX: tiltStateRef.current.tiltX,
+        tiltY: tiltStateRef.current.tiltY,
+        is3DTiltActive: tiltStateRef.current.is3DTiltActive,
+        focusedAreaName: tiltStateRef.current.focusedAreaName,
+      });
       if (typeof document !== 'undefined') {
         delete document.body.dataset.talmudPanning;
       }
@@ -216,7 +284,7 @@ export const Talmud3DViewer: React.FC<Talmud3DViewerProps> = ({
       const hasZoom = typeof detail.targetScale === 'number' && detail.targetScale > 1.05;
       const nextScale = hasZoom ? Math.max(scale > 1.05 ? scale : 1.25, detail.targetScale || 1.25) : 1;
       const targetPanX = nextScale > 1.02 ? (0.5 - ox / 100) * baseW * nextScale : 0;
-      const targetPanY = 0;
+      const targetPanY = nextScale > 1.02 ? (oy / 100) * baseH * (1 - nextScale) : 0;
 
       const clamped = clampPanToContentBounds(targetPanX, targetPanY, nextScale);
       setPanX(clamped.x);
@@ -315,7 +383,7 @@ export const Talmud3DViewer: React.FC<Talmud3DViewerProps> = ({
         })
       );
     }
-  }, [scale, isTransformed]);
+  }, [scale, isTransformed, pageKey]);
 
   // Trackpad two-finger pinch-to-zoom (ctrlKey/metaKey + wheel) up to 500% without transformOrigin jitter
   useEffect(() => {

@@ -3,26 +3,47 @@ import React, { useEffect, useRef, useState } from 'react';
 import { maskPrintedInk } from '../utils/pdfInkMask';
 
 /** Small, transparent glyph masks avoid another full-page canvas allocation. */
-export function PdfInkHighlight({ baseCanvasRef, spots, focusedIds }) {
+export function PdfInkHighlight({ baseCanvasRef, spots, focusedIds, audioSyncIds }) {
   const [tile, setTile] = useState(null);
+  const [basePaintSeq, setBasePaintSeq] = useState(0);
   useEffect(() => {
-    const update = (event) => {
+    const updateTile = (event) => {
       if (event.detail?.base === baseCanvasRef.current) setTile(event.detail);
     };
-    window.addEventListener('talmud-sharp-tile-painted', update);
-    return () => window.removeEventListener('talmud-sharp-tile-painted', update);
+    const updateBase = (event) => {
+      if (!event.detail?.base || event.detail.base === baseCanvasRef.current) {
+        setBasePaintSeq((n) => n + 1);
+      }
+    };
+    window.addEventListener('talmud-sharp-tile-painted', updateTile);
+    window.addEventListener('talmud-base-canvas-painted', updateBase);
+    return () => {
+      window.removeEventListener('talmud-sharp-tile-painted', updateTile);
+      window.removeEventListener('talmud-base-canvas-painted', updateBase);
+    };
   }, [baseCanvasRef]);
   return <div className="absolute inset-0 pointer-events-none z-40" aria-hidden="true">
-    {spots.map((spot) => <InkWord key={spot.id} spot={spot} baseCanvasRef={baseCanvasRef} tile={tile} focused={focusedIds?.has(spot.id)} />)}
+    {spots.map((spot) => (
+      <InkWord
+        key={spot.id}
+        spot={spot}
+        baseCanvasRef={baseCanvasRef}
+        tile={tile}
+        basePaintSeq={basePaintSeq}
+        focused={focusedIds?.has(spot.id)}
+        audioSynced={audioSyncIds?.has(spot.id)}
+      />
+    ))}
   </div>;
 }
 
-function InkWord({ spot, baseCanvasRef, tile, focused }) {
+function InkWord({ spot, baseCanvasRef, tile, basePaintSeq, focused, audioSynced }) {
   const ref = useRef(null);
   const left = spot.inkLeftPct ?? spot.leftPct;
   const top = spot.inkTopPct ?? (spot.topPct + spot.heightPct * 0.22);
   const width = spot.inkWidthPct ?? spot.widthPct;
   const height = spot.inkHeightPct ?? spot.heightPct * 0.8;
+  const isGold = Boolean(focused || audioSynced);
   useEffect(() => {
     const canvas = ref.current;
     const base = baseCanvasRef.current;
@@ -43,12 +64,15 @@ function InkWord({ spot, baseCanvasRef, tile, focused }) {
     maskPrintedInk(image.data);
     ctx.putImageData(image, 0, 0);
     ctx.globalCompositeOperation = 'source-in';
-    ctx.fillStyle = getComputedStyle(canvas).getPropertyValue(focused ? '--reference-focus-gold' : '--reference-target-ink').trim();
+    const cssVar = getComputedStyle(canvas)
+      .getPropertyValue(isGold ? '--reference-focus-gold' : '--reference-target-ink')
+      .trim();
+    ctx.fillStyle = cssVar || (isGold ? '#fbbf24' : '#38bdf8');
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    if (focused) ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (isGold) ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.globalCompositeOperation = 'source-over';
-  }, [baseCanvasRef, tile, spot, left, top, width, height, focused]);
-  return <canvas ref={ref} data-daf-ink-highlight={spot.id} data-focused-ink={focused ? 'true' : undefined}
+  }, [baseCanvasRef, tile, basePaintSeq, spot, left, top, width, height, isGold]);
+  return <canvas ref={ref} data-daf-ink-highlight={spot.id} data-focused-ink={focused ? 'true' : undefined} data-audio-sync-ink={audioSynced ? 'true' : undefined}
     className="absolute pointer-events-none"
     style={{ left: `${left}%`, top: `${top}%`, width: `${width}%`, height: `${height}%` }} />;
 }

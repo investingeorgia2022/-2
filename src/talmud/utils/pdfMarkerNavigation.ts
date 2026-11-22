@@ -1,29 +1,81 @@
 interface MarkerBox {
-  id: string; isSmallMarker?: boolean; leftPct: number; topPct: number; widthPct: number; heightPct: number;
+  id: string; isSmallMarker?: boolean; rowId?: string; leftPct: number; topPct: number; widthPct: number; heightPct: number;
   inkLeftPct?: number; inkTopPct?: number; inkWidthPct?: number; inkHeightPct?: number;
 }
 
-/** Partition padded touch areas at the midpoint between adjacent printed glyphs. */
+/** Partition padded touch areas so markers stay independent from adjacent markers and never encroach on nearby words. */
 export function getIndependentMarkerBoxes<T extends MarkerBox>(spots: T[]): T[] {
   return spots.map(spot => {
     if (!spot.isSmallMarker) return spot;
     const x = spot.inkLeftPct ?? spot.leftPct;
     const w = spot.inkWidthPct ?? spot.widthPct;
     const y = spot.inkTopPct ?? spot.topPct;
+    const h = spot.inkHeightPct ?? spot.heightPct;
+    const xR = x + w;
+    const yB = y + h;
     const center = x + w / 2;
     let left = spot.leftPct;
     let right = spot.leftPct + spot.widthPct;
+    let top = spot.topPct;
+    let bottom = spot.topPct + spot.heightPct;
+
+    // 1. Horizontal partition against same-row markers and same-row non-marker words.
     for (const other of spots) {
-      if (other.id === spot.id || !other.isSmallMarker) continue;
-      const oy = other.inkTopPct ?? other.topPct;
-      if (Math.abs(oy - y) > Math.max(spot.inkHeightPct ?? 0.6, other.inkHeightPct ?? 0.6) * 0.65) continue;
+      if (other.id === spot.id) continue;
       const ox = other.inkLeftPct ?? other.leftPct;
       const ow = other.inkWidthPct ?? other.widthPct;
-      const oc = ox + ow / 2;
-      if (oc < center) left = Math.max(left, (ox + ow + x) / 2);
-      if (oc > center) right = Math.min(right, (x + w + ox) / 2);
+      const oxR = ox + ow;
+      const oy = other.inkTopPct ?? (other.isSmallMarker ? other.topPct : other.topPct + other.heightPct * 0.15);
+      const oh = other.inkHeightPct ?? (other.isSmallMarker ? other.heightPct : other.heightPct * 0.85);
+      const oyB = oy + oh;
+
+      if (other.isSmallMarker) {
+        if (Math.abs(oy - y) > Math.max(spot.inkHeightPct ?? 0.6, other.inkHeightPct ?? 0.6) * 0.65) continue;
+        const oc = ox + ow / 2;
+        if (oc < center) left = Math.max(left, (oxR + x) / 2);
+        if (oc > center) right = Math.min(right, (xR + ox) / 2);
+      } else {
+        const sameRow =
+          (spot.rowId && other.rowId && spot.rowId === other.rowId) ||
+          Math.min(yB, oyB) > Math.max(y, oy) - 0.05;
+        if (!sameRow) continue;
+        const oc = ox + ow / 2;
+        if (oxR <= x + 0.08 && oc < center) {
+          left = Math.max(left, oxR <= x ? (oxR + x) / 2 : Math.min(xR - 0.1, oxR));
+        } else if (ox >= xR - 0.08 && oc > center) {
+          right = Math.min(right, ox >= xR ? (xR + ox) / 2 : Math.max(x + 0.1, ox));
+        }
+      }
     }
-    return { ...spot, leftPct: left, widthPct: Math.max(0.1, right - left) };
+
+    // 2. Vertical clip against non-marker words on adjacent rows whose horizontal span overlaps [left, right].
+    for (const other of spots) {
+      if (other.id === spot.id || other.isSmallMarker) continue;
+      if (spot.rowId && other.rowId && other.rowId === spot.rowId) continue;
+      const ox = other.inkLeftPct ?? other.leftPct;
+      const ow = other.inkWidthPct ?? other.widthPct;
+      const oxR = ox + ow;
+      if (oxR <= left || ox >= right) continue;
+      const otherTop = other.topPct;
+      const otherBot = other.topPct + other.heightPct;
+      if (otherTop >= yB - 0.06) {
+        bottom = Math.min(bottom, Math.max(yB, otherTop));
+      } else if (otherBot <= y + 0.06) {
+        top = Math.max(top, Math.min(y, otherBot));
+      }
+    }
+
+    const finalLeft = Math.min(left, x);
+    const finalRight = Math.max(finalLeft + 0.1, right);
+    const finalTop = Math.min(top, y);
+    const finalBottom = Math.max(finalTop + 0.1, bottom);
+    return {
+      ...spot,
+      leftPct: finalLeft,
+      topPct: finalTop,
+      widthPct: Math.max(0.1, finalRight - finalLeft),
+      heightPct: Math.max(0.1, finalBottom - finalTop),
+    };
   });
 }
 

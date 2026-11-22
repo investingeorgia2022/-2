@@ -25,6 +25,7 @@ import {
   Highlighter,
   Bold,
   Crosshair,
+  Volume2,
 } from 'lucide-react';
 import { AppSettings, AppTheme, RecentlyViewedDaf, UILang } from '../types/talmud';
 import { TRACTATES } from '../data/tractates';
@@ -944,6 +945,48 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </button>
           </div>
 
+          {/* 6b. Smart Greeter (ჭკვიანი კაცუნა) Auto-Speech Toggle */}
+          <div
+            className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 w-full ${
+              isDark ? 'bg-[#2A1D14] border-[#5C3A21]' : 'bg-[#EFE5D0] border-[#CBB89D]'
+            }`}
+          >
+            <div className="flex items-start gap-2.5 min-w-0">
+              <Volume2 className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <div className="text-xs sm:text-sm font-extrabold">
+                  ჭკვიანი კაცუნას ავტომატური ლაპარაკი
+                </div>
+                <div className="text-[11px] opacity-80">
+                  მთავარ ეკრანზე შესვლისას კაცუნას ავტომატური მისალმების და შეხსენების ხმის ჩართვა/გამორთვა
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={settings.enableKacunaAutoSpeak ?? false}
+              onClick={() => {
+                const nextAutoSpeak = !(settings.enableKacunaAutoSpeak ?? false);
+                onUpdateSettings({
+                  ...settings,
+                  enableKacunaAutoSpeak: nextAutoSpeak,
+                });
+              }}
+              className={`w-full sm:w-auto px-5 py-2.5 rounded-xl text-xs font-extrabold flex items-center justify-center gap-2 cursor-pointer shadow-sm shrink-0 ${
+                (settings.enableKacunaAutoSpeak ?? false)
+                  ? 'bg-[#6B4226] hover:bg-[#7D4E2D] text-[#FBF7F0]'
+                  : isDark
+                    ? 'bg-[#362519] text-[#EED9B9] border border-[#5C3A21]'
+                    : 'bg-[#D6C5A9] text-[#2C1A10]'
+              }`}
+            >
+              <span>
+                ავტო-ლაპარაკი: {(settings.enableKacunaAutoSpeak ?? false) ? 'ჩართულია ✓' : 'გამორთულია'}
+              </span>
+            </button>
+          </div>
+
           {/* 7. Vilna PDF Scan Reading Tools Switches (OFF by default) */}
           <div
             className={`p-4 rounded-2xl border space-y-3 w-full ${
@@ -982,10 +1025,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   },
                   {
                     key: 'enableRashiFocusMode' as const,
-                    title: 'რაშის ფოკუს-რეჟიმი (Rashi Focus Mode)',
-                    desc: 'რაშის ფრაგმენტზე დაჭერით გაამუქებს/გაანაცრისფრებს გვერდის დანარჩენ ნაწილებს',
+                    title: 'რაშისა და თოსაფოთის ფოკუს-რეჟიმი (Focus Mode)',
+                    desc: 'რაშის ან თოსაფოთის ფრაგმენტზე დაჭერით გაამუქებს/გაანაცრისფრებს გვერდის დანარჩენ ნაწილებს',
                     icon: <Crosshair className="w-4 h-4 text-amber-500 shrink-0" />,
                     checked: Boolean(settings.enableRashiFocusMode),
+                  },
+                  {
+                    key: 'enableCommentaryJumpSpotlight' as const,
+                    title: 'რაშისა და თოსაფოთის კომენტარების განათება',
+                    desc: 'გემარიდან გადასვლისას გაანათებს კომენტარს :-მდე (გამორთვისას მხოლოდ იციმციმებს)',
+                    icon: <Sun className="w-4 h-4 text-amber-500 shrink-0" />,
+                    checked: Boolean(settings.enableCommentaryJumpSpotlight),
                   },
                 ] as const
               ).map((item) => (

@@ -22,6 +22,8 @@ import {
   ChevronRight,
   PanelBottom,
   Square,
+  Copy,
+  Check,
 } from 'lucide-react';
 import {
   AnalysisMode,
@@ -271,10 +273,23 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
   // Live Georgian translation map for any Sefaria commentary that only had English
   const [translatedCommKa, setTranslatedCommKa] = useState<Record<string, string>>({});
   const [savedToFlashcards, setSavedToFlashcards] = useState<boolean>(false);
+  const [copiedWord, setCopiedWord] = useState<boolean>(false);
 
   useEffect(() => {
     setSavedToFlashcards(false);
+    setCopiedWord(false);
   }, [target.word, target.sentence.id]);
+
+  const handleCopyWord = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const textToCopy = (target.word || '').trim();
+    if (!textToCopy) return;
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(textToCopy).catch(() => {});
+    }
+    setCopiedWord(true);
+    window.setTimeout(() => setCopiedWord(false), 1600);
+  };
 
   const handleSaveWordToSrs = () => {
     try {
@@ -626,18 +641,31 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
 
   // STAGE 2: Compact Note-like Popover Window directly below or above the word depending on its vertical position on the Daf
   if (stage === 'note') {
-    const noteW = Math.min(390, viewportW - 16);
+    const noteW = Math.min(398, viewportW - 20);
     const clampedCenterX = Math.max(16, Math.min(viewportW - 16, liveWordRect.left + liveWordRect.width / 2));
-    const noteLeft = Math.max(8, Math.min(viewportW - noteW - 8, Math.round(clampedCenterX - noteW / 2)));
+    const noteLeft = Math.max(10, Math.min(viewportW - noteW - 10, Math.round(clampedCenterX - noteW / 2)));
     const safeWordTop = Math.max(0, Math.min(viewportH, liveWordRect.top));
     const effectiveBottom = Math.max(safeWordTop, Math.min(viewportH, liveWordRect.bottom));
-    const spaceBelow = viewportH - effectiveBottom - 82;
-    const spaceAbove = safeWordTop - 64;
-    // Prefer below if there's comfortable space, otherwise place above
-    const placeBelow = spaceBelow >= 220 || (spaceBelow >= spaceAbove && spaceBelow >= 150);
-    const noteTopPx = Math.max(58, Math.min(viewportH - 210, Math.round(effectiveBottom + 10)));
-    const noteBottomPx = Math.max(76, Math.min(viewportH - 180, Math.round(viewportH - safeWordTop + 10)));
-    const arrowLeftPx = Math.max(18, Math.min(noteW - 24, Math.round(clampedCenterX - noteLeft - 6)));
+    const topSafe = 66;
+    const bottomSafe = 94;
+    const spaceBelow = viewportH - effectiveBottom - bottomSafe;
+    const spaceAbove = safeWordTop - topSafe;
+    // Dynamically flip between below and above the text selection based on remaining vertical space
+    const placeBelow = spaceBelow >= 228 || (spaceBelow >= spaceAbove && spaceBelow >= 156);
+    const safeMaxHeight = placeBelow
+      ? Math.max(165, Math.min(viewportH - topSafe - bottomSafe, viewportH - Math.round(effectiveBottom + 10) - bottomSafe))
+      : Math.max(165, Math.min(viewportH - topSafe - bottomSafe, Math.round(safeWordTop - 10) - topSafe, 430));
+    const noteTopPx = Math.max(
+      topSafe,
+      Math.min(viewportH - bottomSafe - Math.min(safeMaxHeight, 240), Math.round(effectiveBottom + 10))
+    );
+    const noteBottomPx = Math.max(
+      bottomSafe,
+      Math.min(viewportH - topSafe - Math.min(safeMaxHeight, 200), Math.round(viewportH - safeWordTop + 10))
+    );
+    const arrowLeftPx = Math.max(20, Math.min(noteW - 24, Math.round(clampedCenterX - noteLeft - 6)));
+    const pointerBgHex = isDark ? 'rgba(22, 44, 76, 0.98)' : 'rgba(238, 246, 255, 0.98)';
+    const pointerBorderHex = isDark ? 'rgba(251, 191, 36, 0.56)' : 'rgba(217, 158, 58, 0.72)';
 
     const shortWordMeaning =
       sanitizeGeorgianText(analysis?.wordTranslationGeorgian) ||
@@ -646,10 +674,6 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
     const shortSentenceMeaning =
       sanitizeGeorgianText(analysis?.sentenceTranslationGeorgian || target.sentence.translationKa) ||
       'მიმდინარეობს განმარტების მომზადება...';
-
-    const safeMaxHeight = placeBelow
-      ? Math.max(160, viewportH - noteTopPx - 70)
-      : Math.max(160, Math.min(viewportH - noteBottomPx - 56, 420));
 
     return (
       <motion.div
@@ -683,29 +707,27 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
                 overscrollBehavior: 'contain',
               }
         }
-        className={`rounded-2xl border-2 shadow-[0_18px_48px_rgba(44,29,17,0.38)] p-3 flex flex-col gap-2 relative overflow-y-auto overscroll-contain scrollbar-thin ${
-          isDark
-            ? 'bg-[#261A11]/98 border-[#C49A6C]/75 text-[#FAF5EB] backdrop-blur-xl'
-            : 'bg-[#FDF9F0]/99 border-[#A68256]/80 text-[#2C1D11] backdrop-blur-xl'
-        }`}
+        className="crystal-window-shell rounded-3xl p-3 flex flex-col gap-2.5 relative overflow-y-auto overscroll-contain scrollbar-thin"
       >
         {/* Portal keeps the pointer outside the scrollable note, which previously clipped it. */}
         {!isNoteMaximized && liveWordRect.bottom > 0 && liveWordRect.top < viewportH && createPortal(
           <div
             aria-hidden="true"
             data-word-note-pointer="true"
-            className={isDark ? 'bg-[#261A11] border-[#C49A6C]/75' : 'bg-[#FDF9F0] border-[#A68256]/80'}
+            className="crystal-window-beak"
             style={{
               position: 'fixed',
               left: `${noteLeft + arrowLeftPx - 2}px`,
-              top: `${placeBelow ? noteTopPx - 7 : viewportH - noteBottomPx - 9}px`,
-              width: '16px',
-              height: '16px',
+              top: `${placeBelow ? noteTopPx - 7 : viewportH - noteBottomPx - 8}px`,
+              width: '15px',
+              height: '15px',
+              backgroundColor: pointerBgHex,
+              borderColor: pointerBorderHex,
               borderStyle: 'solid',
-              borderRightWidth: placeBelow ? 0 : 2,
-              borderBottomWidth: placeBelow ? 0 : 2,
-              borderTopWidth: placeBelow ? 2 : 0,
-              borderLeftWidth: placeBelow ? 2 : 0,
+              borderRightWidth: placeBelow ? 0 : 1.5,
+              borderBottomWidth: placeBelow ? 0 : 1.5,
+              borderTopWidth: placeBelow ? 1.5 : 0,
+              borderLeftWidth: placeBelow ? 1.5 : 0,
               transform: 'rotate(45deg)',
               zIndex: 326,
               pointerEvents: 'none',
@@ -713,29 +735,31 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
           />, document.body
         )}
 
-        {/* Header Row: Selected Word (Always shown in FULL, never truncated) + Transliteration + Audio Play/Stop + Note Toggle + Windows Controls */}
-        <div className="flex flex-col gap-1 pb-1.5 border-b border-[#A68256]/35">
+        {/* Header Row: Selected Word + Source + 3D Orb Action & Corner Window Controls */}
+        <div className="crystal-window-header -mx-3 -mt-3 px-3 pt-2.5 pb-2 rounded-t-3xl flex flex-col gap-1.5">
           <div className="flex items-start justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2 min-w-0 flex-1">
               <span
                 dir="rtl"
-                className={`px-3 py-0.5 rounded-lg border font-serif text-lg sm:text-xl font-extrabold leading-snug break-words ${
+                className={`crystal-window-trough px-3 py-0.5 rounded-xl font-serif text-lg sm:text-xl font-extrabold leading-snug break-words ${
                   target.word.trim().includes(' ') ? '' : 'whitespace-nowrap shrink-0'
-                } ${
-                  isDark
-                    ? 'bg-[#3C281B] border-[#C49A6C]/60 text-[#F7EFE0]'
-                    : 'bg-[#F4EAD5] border-[#A68256]/60 text-[#2C1D11]'
                 }`}
               >
                 {target.word}
               </span>
 
               <div className="flex flex-wrap items-center gap-1 text-[10.5px] font-bold min-w-0">
-                <span className="px-1.5 py-0.5 rounded bg-[#8B6234]/15 text-[#6B4226] dark:text-[#EED9B9] whitespace-nowrap shrink-0">
+                <span
+                  className={`px-2 py-0.5 rounded-full border whitespace-nowrap shrink-0 ${
+                    isDark
+                      ? 'bg-sky-950/75 border-amber-400/35 text-amber-200'
+                      : 'bg-white/80 border-amber-500/45 text-[#0F294A]'
+                  }`}
+                >
                   {srcInfo.ka} • {srcInfo.he}
                 </span>
                 {analysis?.wordTransliterationGeorgian && (
-                  <span className="opacity-85 whitespace-nowrap">
+                  <span className="opacity-80 whitespace-nowrap">
                     [{sanitizeGeorgianText(analysis.wordTransliterationGeorgian)}]
                   </span>
                 )}
@@ -745,26 +769,28 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
             <div className="flex items-center gap-1 shrink-0">
               <button
                 type="button"
+                data-raw-btn="true"
+                data-tone={noteInputOpen ? 'amber' : undefined}
                 onClick={() => setNoteInputOpen((v) => !v)}
                 title="პირადი შენიშვნის ჩაწერა (Note)"
-                className="px-2 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                className="crystal-corner-orb w-7 h-7 cursor-pointer"
               >
                 <BookmarkPlus className="w-3.5 h-3.5" />
               </button>
               <button
                 type="button"
+                data-raw-btn="true"
+                data-tone={isSpeakingAudio ? 'rose' : 'sky'}
                 onClick={() => speakHebrew(target.word)}
                 title={isSpeakingAudio ? 'აუდიოს გამორთვა (Stop)' : 'წაკითხვა (Audio)'}
-                className={`px-2 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 cursor-pointer ${
-                  isSpeakingAudio
-                    ? 'bg-red-700 text-white border border-red-400 animate-pulse'
-                    : ''
+                className={`crystal-corner-orb cursor-pointer ${
+                  isSpeakingAudio ? 'h-7 px-2 gap-1 animate-pulse' : 'w-7 h-7'
                 }`}
               >
                 {isSpeakingAudio ? (
                   <>
                     <Square className="w-3 h-3 fill-current" />
-                    <span>Stop</span>
+                    <span className="text-[9.5px] font-black">Stop</span>
                   </>
                 ) : (
                   <Volume2 className="w-3.5 h-3.5" />
@@ -789,18 +815,12 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
           )}
         </div>
 
-        {/* Minimal Word & Context Note Body */}
+        {/* Minimal Word & Context Note Body inside Recessed Crystal Trough */}
         {!isWindowMinimized && (
           <>
-            <div className="space-y-1.5 text-xs leading-relaxed">
-              <div
-                className={`p-2 rounded-xl border ${
-                  isDark
-                    ? 'bg-[#1D130C]/90 border-[#5C3A21]/70 text-[#F7EFE0]'
-                    : 'bg-[#F6EFE0] border-[#D5C2A3] text-[#2C1D11]'
-                }`}
-              >
-                <div className="text-[10px] font-extrabold uppercase tracking-wider opacity-75 mb-0.5">
+            <div className="space-y-2 text-xs leading-relaxed">
+              <div className="crystal-window-trough p-2.5 rounded-2xl">
+                <div className="text-[10px] font-extrabold uppercase tracking-wider text-amber-700 dark:text-amber-300 mb-0.5">
                   {target.word.trim().includes(' ')
                     ? 'მონიშნული ტექსტის განხილვა (Note):'
                     : 'სიტყვის მნიშვნელობა (Note):'}
@@ -817,8 +837,8 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
                 </div>
               </div>
 
-              <div className="px-1 text-[11px] opacity-90 line-clamp-2">
-                <span className="font-bold">კონტექსტი: </span>
+              <div className="px-1.5 text-[11px] opacity-90 line-clamp-2">
+                <span className="font-extrabold text-amber-700 dark:text-amber-300">კონტექსტი: </span>
                 {shortSentenceMeaning}
               </div>
 
@@ -831,13 +851,15 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
                     placeholder="ჩაწერეთ შენიშვნა ამ სიტყვაზე..."
                     className={`flex-1 px-2.5 py-1.5 rounded-xl border text-xs focus:outline-none ${
                       isDark
-                        ? 'bg-[#18100A] border-[#C49A6C]/50 text-[#FAF5EB]'
-                        : 'bg-white border-[#8B6234]/50 text-[#2C1D11]'
+                        ? 'bg-[#081529] border-sky-300/30 text-slate-100'
+                        : 'bg-white/90 border-sky-300/70 text-[#0F294A]'
                     }`}
                   />
                   <button
                     type="submit"
-                    className="px-2.5 py-1.5 rounded-xl text-[11px] font-bold cursor-pointer shrink-0"
+                    data-raw-btn="true"
+                    data-tone="amber"
+                    className="crystal-action-orb px-3 py-1.5 text-[11px] font-black cursor-pointer shrink-0"
                   >
                     შენახვა
                   </button>
@@ -845,23 +867,51 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
               )}
             </div>
 
-            {/* Footer Button: Open Deep Explanation Screen */}
-            <div className="pt-1 flex items-center gap-1.5">
+            {/* Recessed Trough Footer with Interactive 3D Orb Buttons: Copy, Explain & Commentaries */}
+            <div className="crystal-selection-trough flex items-center gap-1.5 overflow-x-auto no-scrollbar">
               <button
                 type="button"
-                onClick={() => onOpenDeepStudy && onOpenDeepStudy('word-explain')}
-                className="flex-1 py-2 px-3 rounded-xl font-extrabold text-[11.5px] flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                data-raw-btn="true"
+                onClick={handleCopyWord}
+                className="crystal-selection-action-pill cursor-pointer"
+                title="სიტყვის კოპირება"
               >
-                <Sparkles className="w-3.5 h-3.5 text-[#8B6234]" />
-                <span>ღრმა შესწავლა • ახსნის ეკრანი</span>
+                <span
+                  className="crystal-selection-orb-badge"
+                  data-tone={copiedWord ? 'emerald' : 'amber'}
+                >
+                  {copiedWord ? (
+                    <Check className="w-3.5 h-3.5 shrink-0" />
+                  ) : (
+                    <Copy className="w-3.5 h-3.5 shrink-0" />
+                  )}
+                </span>
+                <span>{copiedWord ? 'დაკოპირდა' : 'კოპირება'}</span>
               </button>
+
               <button
                 type="button"
+                data-raw-btn="true"
+                onClick={() => onOpenDeepStudy && onOpenDeepStudy('word-explain')}
+                className="crystal-selection-action-pill flex-1 justify-center cursor-pointer"
+                title="ღრმა შესწავლა და დეტალური ახსნა"
+              >
+                <span className="crystal-selection-orb-badge" data-tone="sky">
+                  <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                </span>
+                <span className="truncate">ახსნა • ღრმა შესწავლა</span>
+              </button>
+
+              <button
+                type="button"
+                data-raw-btn="true"
                 onClick={() => onOpenDeepStudy && onOpenDeepStudy('all-commentaries')}
                 title="ყველა კომენტატორის ნახვა"
-                className="py-2 px-2.5 rounded-xl font-bold text-[11px] flex items-center gap-1 cursor-pointer shrink-0"
+                className="crystal-selection-action-pill cursor-pointer shrink-0"
               >
-                <Layers className="w-3.5 h-3.5" />
+                <span className="crystal-selection-orb-badge" data-tone="amber">
+                  <Layers className="w-3.5 h-3.5 shrink-0" />
+                </span>
                 <span>מפרשים ({allCommentaries.length})</span>
               </button>
             </div>
@@ -924,39 +974,32 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
               overscrollBehavior: 'contain',
             }
       }
-      className={`rounded-2xl border-2 shadow-[0_20px_60px_rgba(44,29,17,0.45)] transition-all duration-150 flex flex-col overflow-hidden overscroll-contain ${
+      className={`crystal-window-shell rounded-3xl transition-all duration-150 flex flex-col overflow-hidden overscroll-contain ${
         isFullscreen ? 'max-h-[calc(100vh-16px)]' : ''
-      } ${
-        isDark
-          ? 'bg-[#21160F]/98 border-[#C49A6C]/70 text-[#FAF5EB] backdrop-blur-2xl'
-          : 'bg-[#FDF9F0]/99 border-[#A68256]/75 text-[#2C1D11] backdrop-blur-xl'
       }`}
     >
-      {/* Top Drag Handle & Zoom Control Strip */}
+      {/* Top Drag Handle & Zoom 3D Orb Control Strip */}
       <div
         onMouseDown={!isFullscreen ? handleDragMouseDown : undefined}
         onTouchStart={!isFullscreen ? handleDragTouchStart : undefined}
         onTouchMove={!isFullscreen ? handleDragTouchMove : undefined}
         onTouchEnd={!isFullscreen ? handleDragTouchEnd : undefined}
-        className={`px-3 py-1.5 rounded-t-2xl border-b flex items-center justify-between gap-2 cursor-move select-none touch-none ${
-          isDark
-            ? 'bg-gradient-to-r from-[#2D1F15] via-[#3E2A1C] to-[#2D1F15] border-[#C49A6C]/35 text-[#EED9B9]'
-            : 'bg-gradient-to-r from-[#F3E9D7] via-[#FAF3E6] to-[#F3E9D7] border-[#A68256]/35 text-[#2C1D11]'
-        }`}
+        className="crystal-window-header px-3 py-2 rounded-t-3xl flex items-center justify-between gap-2 cursor-move select-none touch-none"
       >
         <div className="flex items-center gap-1.5 text-[11px] font-bold min-w-0 flex-1">
           {onBackToNote && (
             <button
               type="button"
+              data-raw-btn="true"
               onClick={onBackToNote}
-              className="px-2 py-0.5 rounded-lg text-[10px] font-extrabold cursor-pointer shrink-0"
+              className="crystal-action-orb px-2.5 py-0.5 text-[10px] font-extrabold cursor-pointer shrink-0"
               title="Note ფანჯარაზე დაბრუნება"
             >
               ← Note
             </button>
           )}
-          <Move className="w-3.5 h-3.5 shrink-0 text-[#8B6234]" />
-          <span className="truncate">
+          <Move className="w-3.5 h-3.5 shrink-0 text-amber-600 dark:text-amber-300" />
+          <span className="truncate font-extrabold">
             {isFullscreen
               ? 'მთელ ეკრანზე რეჟიმი'
               : isSectionReaderOpen
@@ -965,21 +1008,19 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
           </span>
         </div>
 
-        {/* Zoom, Dock & Fullscreen Controls */}
+        {/* Zoom, Dock & Fullscreen 3D Orb Controls */}
         <div className="flex items-center gap-1 shrink-0">
           {!isFullscreen && !isSectionReaderOpen && (
             <button
               type="button"
+              data-raw-btn="true"
+              data-tone={dockBottomMode ? 'amber' : undefined}
               onClick={() => {
                 setDockBottomMode((v) => !v);
                 setDragOffset({ x: 0, y: 0 });
               }}
               title="ქვედა დოკ-პანელის რეჟიმი / სიტყვის ქვეშ მიბმა"
-              className={`px-1.5 py-0.5 rounded-full border text-[10px] font-bold flex items-center gap-1 cursor-pointer ${
-                dockBottomMode
-                  ? 'bg-[#6B4226] text-[#FBF7F0] border-[#C49A6C]'
-                  : 'bg-[#6B4226]/15 border-[#8B5A2B]/40'
-              }`}
+              className="crystal-action-orb px-2 py-0.5 text-[10px] font-bold cursor-pointer"
             >
               <PanelBottom className="w-3 h-3" />
               <span className="hidden sm:inline">დოკი</span>
@@ -987,32 +1028,35 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
           )}
           <button
             type="button"
+            data-raw-btn="true"
             onClick={() => setPopoverZoom((z) => Math.max(70, z - 10))}
             title="დაპატარავება (Zoom Out)"
-            className="p-1 rounded-full bg-[#6B4226]/20 hover:bg-[#6B4226]/35 border border-[#8B5A2B]/40 cursor-pointer shrink-0"
+            className="crystal-corner-orb w-6 h-6 cursor-pointer shrink-0"
           >
             <ZoomOut className="w-3 h-3" />
           </button>
-          <span className="text-[10px] font-mono font-bold px-1 min-w-[34px] text-center shrink-0">
+          <span className="text-[10px] font-mono font-black px-1 min-w-[34px] text-center shrink-0 tabular-nums">
             {popoverZoom}%
           </span>
           <button
             type="button"
+            data-raw-btn="true"
             onClick={() => setPopoverZoom((z) => Math.min(160, z + 10))}
             title="გადიდება (Zoom In)"
-            className="p-1 rounded-full bg-[#6B4226]/20 hover:bg-[#6B4226]/35 border border-[#8B5A2B]/40 cursor-pointer shrink-0"
+            className="crystal-corner-orb w-6 h-6 cursor-pointer shrink-0"
           >
             <ZoomIn className="w-3 h-3" />
           </button>
           {(popoverZoom !== 100 || dragOffset.x !== 0 || dragOffset.y !== 0) && (
             <button
               type="button"
+              data-raw-btn="true"
               onClick={() => {
                 setPopoverZoom(100);
                 setDragOffset({ x: 0, y: 0 });
               }}
               title="საწყის ზომაზე და პოზიციაზე დაბრუნება"
-              className="p-1 rounded-full bg-[#6B4226]/20 hover:bg-[#6B4226]/35 cursor-pointer shrink-0"
+              className="crystal-corner-orb w-6 h-6 cursor-pointer shrink-0"
             >
               <RotateCcw className="w-3 h-3" />
             </button>
@@ -1029,40 +1073,33 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
         </div>
       </div>
 
-      {/* Header: Selected Word & Source (Row 1: Word + Source on left, Action buttons pushed all the way to top right; Row 2: Full-width sentence word strip) */}
+      {/* Header: Selected Word & Source + 3D Orb Action Row + Interactive Sentence Strip */}
       <div
         onMouseDown={!isFullscreen ? handleDragMouseDown : undefined}
         onTouchStart={!isFullscreen ? handleDragTouchStart : undefined}
         onTouchMove={!isFullscreen ? handleDragTouchMove : undefined}
         onTouchEnd={!isFullscreen ? handleDragTouchEnd : undefined}
-        className={`px-3 pt-1.5 pb-2 border-b flex flex-col gap-1.5 cursor-move select-none touch-none ${
-          isDark ? 'border-[#5C3A21] bg-[#2B1D14]/90' : 'border-[#CBB89D] bg-[#EDE2CC]'
-        }`}
+        className="px-3 pt-2 pb-2 border-b border-amber-500/20 flex flex-col gap-1.5 cursor-move select-none touch-none"
       >
-        {/* Top Row: Selected Word + Source on Left | Orange-highlighted Action Buttons Pushed All the Way to the Top on Right */}
         <div className="w-full flex items-start justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <div
               dir="rtl"
-              className={`px-2.5 py-0.5 rounded-lg border font-serif text-lg sm:text-xl font-bold shadow-inner break-words ${
+              className={`crystal-window-trough px-3 py-0.5 rounded-xl font-serif text-lg sm:text-xl font-bold break-words ${
                 target.word.trim().includes(' ') ? '' : 'whitespace-nowrap shrink-0'
-              } ${
-                isDark
-                  ? 'bg-[#6B4226]/30 border-[#C49A6C]/50 text-[#FAF5EB]'
-                  : 'bg-[#6B4226]/15 border-[#8B5A2B]/45 text-[#2C1A10]'
               }`}
             >
               {target.word}
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-1 text-[11px] font-semibold leading-tight">
-                <span className={isDark ? 'text-[#EED9B9]' : 'text-[#4A2E1B]'}>{srcInfo.ka}</span>
+                <span className="font-extrabold text-amber-700 dark:text-amber-300">{srcInfo.ka}</span>
                 <span aria-hidden="true">·</span>
                 <span dir="rtl" className="font-serif whitespace-nowrap">
                   {srcInfo.he}
                 </span>
                 {analysis?.wordTransliterationGeorgian && (
-                  <span className={`truncate ${isDark ? 'text-[#DECAA8]' : 'text-[#5C3A21]'}`}>
+                  <span className="truncate opacity-80">
                     [{sanitizeGeorgianText(analysis.wordTransliterationGeorgian)}]
                   </span>
                 )}
@@ -1070,95 +1107,76 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
             </div>
           </div>
 
-          {/* Action Buttons Pushed All the Way to the Top Right */}
-          <div className="flex items-center gap-1 shrink-0 self-start -mt-0.5">
+          {/* 3D Orb Action Buttons in Top Right */}
+          <div className="crystal-selection-trough flex items-center gap-1 shrink-0 self-start">
             {sentenceWords.length > 1 && onSelectWord && (
               <>
                 <button
                   type="button"
+                  data-raw-btn="true"
                   onClick={() => handleStepWord(-1)}
                   title="წინა სიტყვა წინადადებაში"
-                  className={`p-1 rounded-lg transition-colors cursor-pointer ${
-                    isDark
-                      ? 'bg-[#1D130D]/70 hover:bg-[#3A271B] text-[#EED9B9] border border-[#5C3A21]'
-                      : 'bg-[#FAF5EB]/80 hover:bg-[#D6C5A9] text-[#4A2E1B] border border-[#CBB89D]'
-                  }`}
+                  className="crystal-corner-orb w-6.5 h-6.5 cursor-pointer"
                 >
-                  <ChevronRight className="w-4 h-4" />
+                  <ChevronRight className="w-3.5 h-3.5" />
                 </button>
                 <button
                   type="button"
+                  data-raw-btn="true"
                   onClick={() => handleStepWord(1)}
                   title="შემდეგი სიტყვა წინადადებაში"
-                  className={`p-1 rounded-lg transition-colors cursor-pointer ${
-                    isDark
-                      ? 'bg-[#1D130D]/70 hover:bg-[#3A271B] text-[#EED9B9] border border-[#5C3A21]'
-                      : 'bg-[#FAF5EB]/80 hover:bg-[#D6C5A9] text-[#4A2E1B] border border-[#CBB89D]'
-                  }`}
+                  className="crystal-corner-orb w-6.5 h-6.5 cursor-pointer"
                 >
-                  <ChevronLeft className="w-4 h-4" />
+                  <ChevronLeft className="w-3.5 h-3.5" />
                 </button>
               </>
             )}
             <button
               type="button"
+              data-raw-btn="true"
+              data-tone={copiedWord ? 'emerald' : 'amber'}
+              onClick={handleCopyWord}
+              title="სიტყვის კოპირება"
+              className="crystal-corner-orb w-6.5 h-6.5 cursor-pointer"
+            >
+              {copiedWord ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+            </button>
+            <button
+              type="button"
+              data-raw-btn="true"
+              data-tone={isSpeakingAudio ? 'rose' : 'sky'}
               onClick={() => speakHebrew(target.word)}
               title={isSpeakingAudio ? 'აუდიოს გამორთვა (Stop)' : 'წაკითხვა (אודיו)'}
-              className={`px-2 py-1 rounded-lg transition-colors cursor-pointer flex items-center gap-1 text-[10px] font-bold ${
-                isSpeakingAudio
-                  ? 'bg-red-700 text-white border border-red-400 animate-pulse'
-                  : isDark
-                    ? 'bg-[#1D130D]/70 hover:bg-[#3A271B] text-[#EED9B9] border border-[#5C3A21]'
-                    : 'bg-[#FAF5EB]/80 hover:bg-[#D6C5A9] text-[#4A2E1B] border border-[#CBB89D]'
+              className={`crystal-corner-orb cursor-pointer ${
+                isSpeakingAudio ? 'h-6.5 px-2 gap-1 animate-pulse' : 'w-6.5 h-6.5'
               }`}
             >
               {isSpeakingAudio ? (
                 <>
-                  <Square className="w-3.5 h-3.5 fill-current" />
-                  <span>Stop</span>
+                  <Square className="w-3 h-3 fill-current" />
+                  <span className="text-[9.5px] font-black">Stop</span>
                 </>
               ) : (
-                <Volume2 className="w-4 h-4" />
+                <Volume2 className="w-3.5 h-3.5" />
               )}
             </button>
             <button
               type="button"
+              data-raw-btn="true"
+              data-tone={showAllModes ? 'amber' : undefined}
               onClick={() => setShowAllModes((v) => !v)}
               title="ყველა განმარტების ერთად ჩვენება"
-              className={`p-1 rounded-lg transition-colors cursor-pointer border ${
-                showAllModes
-                  ? isDark
-                    ? 'bg-[#6B4226] text-[#FAF5EB] border-[#C49A6C]'
-                    : 'bg-[#6B4226] text-[#FAF5EB] border-[#4A2E1B]'
-                  : isDark
-                    ? 'bg-[#1D130D]/70 hover:bg-[#3A271B] text-[#C49A6C] border-[#5C3A21]'
-                    : 'bg-[#FAF5EB]/80 hover:bg-[#D6C5A9] text-[#5C3A21] border-[#CBB89D]'
-              }`}
+              className="crystal-corner-orb w-6.5 h-6.5 cursor-pointer"
             >
-              <Layers className="w-4 h-4" />
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className={`p-1 rounded-lg transition-colors cursor-pointer border ${
-                isDark
-                  ? 'bg-[#1D130D]/70 hover:bg-[#3A271B] text-[#C49A6C] hover:text-white border-[#5C3A21]'
-                  : 'bg-[#FAF5EB]/80 hover:bg-[#D6C5A9] text-[#5C3A21] hover:text-[#2C1A10] border-[#CBB89D]'
-              }`}
-            >
-              <X className="w-4 h-4" />
+              <Layers className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
 
-        {/* Bottom Row: Green-highlighted Interactive Sentence Word Strip Expanded to 100% Full Width */}
+        {/* Interactive Sentence Word Strip inside Recessed Crystal Trough */}
         <div
           dir="rtl"
-          className={`w-full flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1 px-2 rounded-xl border ${
-            isDark
-              ? 'bg-[#1D130D]/80 border-[#5C3A21]/80'
-              : 'bg-[#FAF5EB]/90 border-[#CBB89D]'
-          }`}
+          className="crystal-window-trough w-full flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1 px-2 rounded-xl"
         >
           {sentenceWords.map((rawW, idx) => {
             const cleaned = cleanWordToken(rawW);
@@ -1167,6 +1185,7 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
               <button
                 key={`${rawW}-${idx}`}
                 type="button"
+                data-raw-btn="true"
                 onClick={(e) => {
                   e.stopPropagation();
                   if (onSelectWord && cleaned) {
@@ -1181,10 +1200,12 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
                 }}
                 className={`px-2 py-0.5 rounded-lg font-serif text-xs sm:text-sm whitespace-nowrap transition-all cursor-pointer shrink-0 ${
                   isCurrent
-                    ? 'bg-[#6B4226] text-[#FBF7F0] font-black shadow-sm scale-105'
+                    ? isDark
+                      ? 'bg-amber-400 text-[#0B1D36] font-black shadow-sm scale-105'
+                      : 'bg-[#0F294A] text-amber-200 font-black shadow-sm scale-105'
                     : isDark
-                      ? 'text-[#DECAA8] hover:bg-[#3A271B] hover:text-[#FAF5EB]'
-                      : 'text-[#4A2E1B] hover:bg-[#6B4226]/15 hover:text-[#2C1A10]'
+                      ? 'text-slate-200 hover:bg-sky-500/20 hover:text-white'
+                      : 'text-[#0F294A] hover:bg-sky-200/60'
                 }`}
                 title={`სიტყვის არჩევა: ${cleaned}`}
               >
@@ -1216,16 +1237,8 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {/* Word Group */}
-          <div
-            className={`p-2 rounded-xl border min-w-0 ${
-              isDark ? 'bg-[#2A1D14]/80 border-[#5C3A21]' : 'bg-[#EDE2CC]/80 border-[#CBB89D]'
-            }`}
-          >
-            <div
-              className={`text-[10.5px] font-bold mb-1.5 flex items-center justify-between gap-1 ${
-                isDark ? 'text-[#EED9B9]' : 'text-[#4A2E1B]'
-              }`}
-            >
+          <div className="crystal-window-trough p-2 rounded-2xl min-w-0">
+            <div className="text-[10.5px] font-bold mb-1.5 flex items-center justify-between gap-1 text-amber-700 dark:text-amber-300">
               <span className="truncate">სიტყვა (מילה)</span>
               <Languages className="w-3 h-3 shrink-0" />
             </div>
@@ -1240,16 +1253,18 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
                 <button
                   key={btn.id}
                   type="button"
+                  data-raw-btn="true"
+                  data-tone={activeMode === btn.id && !showAllModes ? 'amber' : undefined}
                   onClick={() => {
                     onSelectMode(btn.id);
                     setShowAllModes(false);
                   }}
-                  className={`py-1.5 px-1 rounded-lg text-[10px] font-bold text-center truncate transition-all cursor-pointer ${
+                  className={`py-1.5 px-1 rounded-full text-[10px] font-bold text-center truncate transition-all cursor-pointer ${
                     activeMode === btn.id && !showAllModes
-                      ? 'bg-[#6B4226] text-[#FBF7F0] shadow-sm'
+                      ? 'crystal-action-orb justify-center'
                       : isDark
-                        ? 'bg-[#1D130D] text-[#EED9B9] hover:bg-[#3A271B]'
-                        : 'bg-[#FBF7F0] text-[#2C1A10] hover:bg-[#DFCFB4]'
+                        ? 'bg-[#0F223D]/80 text-slate-100 hover:bg-[#19355E]'
+                        : 'bg-white/80 text-[#0F294A] hover:bg-white'
                   }`}
                 >
                   {btn.label}
@@ -1259,16 +1274,8 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
           </div>
 
           {/* Sentence Group */}
-          <div
-            className={`p-2 rounded-xl border min-w-0 ${
-              isDark ? 'bg-[#2A1D14]/80 border-[#5C3A21]' : 'bg-[#EDE2CC]/80 border-[#CBB89D]'
-            }`}
-          >
-            <div
-              className={`text-[10.5px] font-bold mb-1.5 flex items-center justify-between gap-1 ${
-                isDark ? 'text-[#EED9B9]' : 'text-[#4A2E1B]'
-              }`}
-            >
+          <div className="crystal-window-trough p-2 rounded-2xl min-w-0">
+            <div className="text-[10.5px] font-bold mb-1.5 flex items-center justify-between gap-1 text-amber-700 dark:text-amber-300">
               <span className="truncate">წინადადება (משפט)</span>
               <FileText className="w-3 h-3 shrink-0" />
             </div>
@@ -1283,16 +1290,18 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
                 <button
                   key={btn.id}
                   type="button"
+                  data-raw-btn="true"
+                  data-tone={activeMode === btn.id && !showAllModes ? 'sky' : undefined}
                   onClick={() => {
                     onSelectMode(btn.id);
                     setShowAllModes(false);
                   }}
-                  className={`py-1.5 px-1 rounded-lg text-[10px] font-bold text-center truncate transition-all cursor-pointer ${
+                  className={`py-1.5 px-1 rounded-full text-[10px] font-bold text-center truncate transition-all cursor-pointer ${
                     activeMode === btn.id && !showAllModes
-                      ? 'bg-[#6B4226] text-[#FBF7F0] shadow-sm'
+                      ? 'crystal-action-orb justify-center'
                       : isDark
-                        ? 'bg-[#1D130D] text-[#EED9B9] hover:bg-[#3A271B]'
-                        : 'bg-[#FBF7F0] text-[#2C1A10] hover:bg-[#DFCFB4]'
+                        ? 'bg-[#0F223D]/80 text-slate-100 hover:bg-[#19355E]'
+                        : 'bg-white/80 text-[#0F294A] hover:bg-white'
                   }`}
                 >
                   {btn.label}
@@ -1302,24 +1311,22 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
           </div>
         </div>
 
-        {/* Dedicated Full Source / Pasuk Finder & Sefaria Commentaries Buttons */}
+        {/* Dedicated Full Source / Pasuk Finder & Sefaria Commentaries 3D Orb Buttons */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <button
             type="button"
+            data-raw-btn="true"
+            data-tone={activeMode === 'source-lookup' && !showAllModes ? 'amber' : undefined}
             onClick={() => {
               onSelectMode('source-lookup');
               setShowAllModes(false);
             }}
-            className={`py-2 px-2.5 rounded-xl border text-[11px] font-bold flex items-center justify-between gap-1.5 transition-all cursor-pointer ${
-              activeMode === 'source-lookup' && !showAllModes
-                ? 'bg-[#5C3A21] text-[#FBF7F0] border-[#C49A6C] shadow-md'
-                : isDark
-                  ? 'bg-[#2A1D14] border-[#5C3A21] text-[#EED9B9] hover:bg-[#3A271B]'
-                  : 'bg-[#EFE5D0] border-[#8B5A2B]/40 text-[#2C1A10] hover:bg-[#DFCFB4]'
-            }`}
+            className="crystal-action-orb py-2 px-3 rounded-2xl! text-[11px] font-bold justify-between cursor-pointer"
           >
             <div className="flex items-center gap-1.5 truncate">
-              <BookOpen className="w-3.5 h-3.5 shrink-0" />
+              <span className="crystal-corner-orb w-5.5 h-5.5 shrink-0" data-tone="amber">
+                <BookOpen className="w-3 h-3" />
+              </span>
               <span className="truncate">მთლიანი წყარო / ფასუკი</span>
             </div>
             <span dir="rtl" className="font-serif text-xs font-bold whitespace-nowrap">
@@ -1329,20 +1336,18 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
 
           <button
             type="button"
+            data-raw-btn="true"
+            data-tone={activeMode === 'all-commentaries' && !showAllModes ? 'sky' : undefined}
             onClick={() => {
               onSelectMode('all-commentaries');
               setShowAllModes(false);
             }}
-            className={`py-2 px-2.5 rounded-xl border text-[11px] font-bold flex items-center justify-between gap-1.5 transition-all cursor-pointer ${
-              activeMode === 'all-commentaries' && !showAllModes
-                ? 'bg-[#6B4226] text-[#FBF7F0] border-[#C49A6C] shadow-md'
-                : isDark
-                  ? 'bg-[#2A1D14] border-[#5C3A21] text-[#EED9B9] hover:bg-[#3A271B]'
-                  : 'bg-[#EFE5D0] border-[#8B5A2B]/40 text-[#2C1A10] hover:bg-[#DFCFB4]'
-            }`}
+            className="crystal-action-orb py-2 px-3 rounded-2xl! text-[11px] font-bold justify-between cursor-pointer"
           >
             <div className="flex items-center gap-1.5 truncate">
-              <Layers className="w-3.5 h-3.5 shrink-0" />
+              <span className="crystal-corner-orb w-5.5 h-5.5 shrink-0" data-tone="sky">
+                <Layers className="w-3 h-3" />
+              </span>
               <span className="truncate">სეფარიას კომენტარები ({allCommentaries.length})</span>
             </div>
             <span dir="rtl" className="font-serif text-xs font-bold whitespace-nowrap">
@@ -1351,15 +1356,11 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
           </button>
         </div>
 
-        {/* Result Content Area with Movable Reading Line */}
+        {/* Result Content Area inside Recessed Crystal Well */}
         <div
           style={{ overscrollBehavior: 'contain' }}
-          className={`relative rounded-xl border p-3.5 overflow-y-auto overscroll-contain transition-all ${
+          className={`crystal-window-trough relative rounded-2xl p-3.5 overflow-y-auto overscroll-contain transition-all ${
             isFullscreen ? 'max-h-[65vh] text-base' : 'max-h-60'
-          } ${
-            isDark
-              ? 'bg-[#1A110B] border-[#5C3A21] text-[#FAF5EB]'
-              : 'bg-[#FCF9F2] border-[#CBB89D] text-[#2C1A10]'
           }`}
         >
           <ReadingLineGuide
@@ -1370,13 +1371,13 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
 
           {uiLang !== 'ka' && uiLang !== 'he' && multiLangTrans.word && (
             <div
-              className={`mb-2.5 p-2.5 rounded-lg border text-xs ${
+              className={`mb-2.5 p-2.5 rounded-xl border text-xs ${
                 isDark
-                  ? 'bg-[#6B4226]/25 border-[#C49A6C]/40 text-[#EED9B9]'
-                  : 'bg-[#EFE5D0] border-[#8B5A2B]/35 text-[#2C1A10]'
+                  ? 'bg-[#0F223D]/80 border-sky-300/25 text-slate-100'
+                  : 'bg-white/80 border-sky-300/60 text-[#0F294A]'
               }`}
             >
-              <div className="font-extrabold text-[11px] uppercase tracking-wider mb-1">
+              <div className="font-extrabold text-[11px] uppercase tracking-wider mb-1 text-amber-700 dark:text-amber-300">
                 {LANG_LABELS[uiLang]}:
               </div>
               <div className="font-bold text-sm mb-1">{multiLangTrans.word}</div>
@@ -1387,7 +1388,7 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
           )}
           {loading && !analysis ? (
             <div className="py-6 flex flex-col items-center justify-center gap-2 text-xs">
-              <Loader2 className="w-5 h-5 animate-spin text-[#B8860B]" />
+              <Loader2 className="w-5 h-5 animate-spin text-amber-500" />
               <span>მიმდინარეობს თალმუდური ტექსტის ქართული ანალიზი...</span>
             </div>
           ) : analysis ? (
@@ -1599,10 +1600,10 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
                   <div className="space-y-2.5">
                     <div className="flex flex-wrap items-center justify-between gap-1.5">
                       <span
-                        className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md ${
+                        className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
                           isDark
-                            ? 'bg-[#6B4226]/30 text-[#EED9B9] border border-[#C49A6C]/40'
-                            : 'bg-[#EFE5D0] text-[#4A2E1B] border border-[#8B5A2B]/40'
+                            ? 'bg-sky-950/75 text-amber-200 border-amber-400/35'
+                            : 'bg-white/85 text-[#0F294A] border-amber-500/45'
                         }`}
                       >
                         {analysis.sourceDetails.sourceCategoryKa} •{' '}
@@ -1610,39 +1611,29 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
                       </span>
                       <span
                         dir="rtl"
-                        className={`font-serif text-xs font-bold ${
-                          isDark ? 'text-[#EED9B9]' : 'text-[#4A2E1B]'
-                        }`}
+                        className="font-serif text-xs font-bold text-amber-700 dark:text-amber-300"
                       >
                         {analysis.sourceDetails.citationHe}
                       </span>
                     </div>
 
-                    <div
-                      className={`text-xs font-bold ${
-                        isDark ? 'text-[#EED9B9]' : 'text-[#4A2E1B]'
-                      }`}
-                    >
+                    <div className="text-xs font-bold text-amber-700 dark:text-amber-300">
                       წყარო: {analysis.sourceDetails.citationKa}
                     </div>
 
                     <div
                       dir="rtl"
-                      className={`p-2.5 rounded-lg border font-serif text-base sm:text-lg font-bold leading-relaxed ${
+                      className={`p-2.5 rounded-xl border font-serif text-base sm:text-lg font-bold leading-relaxed ${
                         isDark
-                          ? 'bg-[#241810] border-[#C49A6C]/40 text-[#FAF5EB]'
-                          : 'bg-[#F5EBD6] border-[#8B5A2B]/40 text-[#2C1A10]'
+                          ? 'bg-[#0C1D36]/80 border-sky-300/25 text-slate-100'
+                          : 'bg-white/85 border-sky-200 text-[#0F294A]'
                       }`}
                     >
                       {analysis.sourceDetails.fullOriginalTextHe}
                     </div>
 
                     <div>
-                      <div
-                        className={`text-[10px] font-bold uppercase tracking-wider mb-0.5 ${
-                          isDark ? 'text-[#C49A6C]' : 'text-[#6B4226]'
-                        }`}
-                      >
+                      <div className="text-[10px] font-bold uppercase tracking-wider mb-0.5 text-amber-700 dark:text-amber-300">
                         მთლიანი ფასუკის / წყაროს ქართული თარგმანი:
                       </div>
                       <p className="text-xs sm:text-sm font-medium leading-relaxed">
@@ -1655,11 +1646,7 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
                 {activeMode === 'all-commentaries' && (
                   <div className="space-y-2.5">
                     <div className="flex items-center justify-between">
-                      <span
-                        className={`text-[11px] font-bold ${
-                          isDark ? 'text-[#EED9B9]' : 'text-[#4A2E1B]'
-                        }`}
-                      >
+                      <span className="text-[11px] font-bold text-amber-700 dark:text-amber-300">
                         სეფარიას კომენტატორები ამ გვერდზე ({allCommentaries.length}):
                       </span>
                     </div>
@@ -1674,26 +1661,22 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
                         return (
                           <div
                             key={comm.id}
-                            className={`p-2.5 rounded-lg border ${
+                            className={`p-2.5 rounded-xl border ${
                               isDark
-                                ? 'bg-[#241810]/90 border-[#5C3A21]'
-                                : 'bg-[#F5EBD6] border-[#CBB89D]'
+                                ? 'bg-[#0D1E38]/85 border-sky-300/20 text-slate-100'
+                                : 'bg-white/85 border-sky-200/80 text-[#0F294A]'
                             }`}
                           >
                             <div className="flex items-center justify-between gap-2 mb-1">
-                              <span
-                                className={`text-xs font-bold ${
-                                  isDark ? 'text-[#EED9B9]' : 'text-[#4A2E1B]'
-                                }`}
-                              >
+                              <span className="text-xs font-bold text-amber-700 dark:text-amber-300">
                                 {comm.commentatorKa}
                               </span>
                               <span
                                 dir="rtl"
-                                className={`font-serif text-[11px] font-bold px-1.5 py-0.5 rounded ${
+                                className={`font-serif text-[11px] font-bold px-2 py-0.5 rounded-full border ${
                                   isDark
-                                    ? 'bg-[#362519] text-[#FAF5EB]'
-                                    : 'bg-[#DFCFB4] text-[#2C1A10]'
+                                    ? 'bg-sky-950 text-amber-200 border-sky-300/25'
+                                    : 'bg-sky-50 text-[#0F294A] border-sky-200'
                                 }`}
                               >
                                 {comm.heRef}
@@ -1706,13 +1689,7 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
                               {comm.he}
                             </div>
                             {kaText && (
-                              <div
-                                className={`text-[11px] leading-snug pt-1 border-t ${
-                                  isDark
-                                    ? 'border-[#5C3A21] text-[#DECAA8]'
-                                    : 'border-[#CBB89D] text-[#3D2516]'
-                                }`}
-                              >
+                              <div className="text-[11px] leading-snug pt-1 border-t border-sky-400/20 opacity-90">
                                 {kaText}
                               </div>
                             )}
@@ -1727,18 +1704,15 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
           ) : null}
         </div>
 
-        {/* Footer: Add Personal Gloss / Note & Save to Flashcards */}
+        {/* Footer: Add Personal Gloss / Note & Save to Flashcards as 3D Orbs */}
         <div className="pt-1 flex flex-wrap items-center justify-between gap-2">
           {!noteInputOpen ? (
             <div className="flex flex-wrap items-center gap-1.5">
               <button
                 type="button"
+                data-raw-btn="true"
                 onClick={() => setNoteInputOpen(true)}
-                className={`text-xs font-semibold flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer ${
-                  isDark
-                    ? 'bg-[#2A1D14] hover:bg-[#3A271B] text-[#EED9B9] border border-[#5C3A21]'
-                    : 'bg-[#E6DAC2] hover:bg-[#DDD0B6] text-[#2C1A10] border border-[#8B5A2B]/40'
-                }`}
+                className="crystal-action-orb text-xs font-semibold px-3 py-1.5 cursor-pointer"
               >
                 <BookmarkPlus className="w-3.5 h-3.5" />
                 <span>კომენტარის / შენიშვნის (הגהה) ჩაწერა</span>
@@ -1746,12 +1720,10 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
 
               <button
                 type="button"
+                data-raw-btn="true"
+                data-tone={savedToFlashcards ? 'emerald' : 'amber'}
                 onClick={handleSaveWordToSrs}
-                className={`text-xs font-bold flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer ${
-                  savedToFlashcards
-                    ? 'bg-[#2E6B3E] text-[#FBF7F0] border border-[#2E6B3E]'
-                    : 'bg-[#6B4226] hover:bg-[#7D4E2D] text-[#FBF7F0] border border-[#C49A6C]/50'
-                }`}
+                className="crystal-action-orb text-xs font-bold px-3 py-1.5 cursor-pointer"
               >
                 <span>
                   {savedToFlashcards ? 'ფლეშ-ბარათებში შენახულია ✓' : '+ ფლეშ-ბარათებში შენახვა'}
@@ -1765,22 +1737,26 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
                 value={noteText}
                 onChange={(e) => setNoteText(e.target.value)}
                 placeholder="ჩაწერეთ თქვენი ხიდუში ან შენიშვნა..."
-                className={`flex-1 px-2.5 py-1.5 rounded-lg text-xs border focus:outline-none ${
+                className={`flex-1 px-2.5 py-1.5 rounded-xl text-xs border focus:outline-none ${
                   isDark
-                    ? 'bg-[#1D130D] border-[#C49A6C]/50 text-[#FAF5EB]'
-                    : 'bg-white border-[#8B5A2B]/50 text-[#2C1A10]'
+                    ? 'bg-[#081529] border-sky-300/30 text-slate-100'
+                    : 'bg-white/90 border-sky-300/70 text-[#0F294A]'
                 }`}
               />
               <button
                 type="submit"
-                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#6B4226] text-[#FBF7F0] hover:bg-[#7D4E2D] cursor-pointer"
+                data-raw-btn="true"
+                data-tone="amber"
+                className="crystal-action-orb px-3 py-1.5 text-xs font-bold cursor-pointer"
               >
                 შენახვა
               </button>
               <button
                 type="button"
+                data-raw-btn="true"
+                data-tone="rose"
                 onClick={() => setNoteInputOpen(false)}
-                className="p-1.5 rounded-lg text-xs opacity-70 hover:opacity-100 cursor-pointer"
+                className="crystal-corner-orb w-7 h-7 cursor-pointer"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -1788,7 +1764,7 @@ export const WordSentencePopover: React.FC<WordSentencePopoverProps> = ({
           )}
 
           {loading && analysis && (
-            <div className="flex items-center gap-1 text-[10px] text-[#B8860B]">
+            <div className="flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-300">
               <Sparkles className="w-3 h-3 animate-pulse" />
               <span>AI აზუსტებს...</span>
             </div>

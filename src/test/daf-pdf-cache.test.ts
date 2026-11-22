@@ -49,4 +49,12 @@ describe('offline daf database', () => {
     expect(tractateFromDafPdfUrl(talmudDafPdfUrl('Bava_Kamma', '12b'))).toBe('Bava_Kamma');
     expect(tractateFromDafPdfUrl('/chumash-pdf/Genesis-1.pdf')).toBeNull();
   });
+
+  it('uses processed render cache version 5 in cache keys to invalidate stale pre-tinted bitmaps', async () => {
+    const { DAF_RENDER_CACHE_VERSION, dafRenderCacheKey } = await import('../talmud/utils/dafRenderCache');
+    expect(DAF_RENDER_CACHE_VERSION).toBe(5);
+    expect(dafRenderCacheKey('/api/talmud/vilna-pdf?tractate=Berakhot&daf=2a', 1200, 1700, false)).toBe(
+      'v5|l|1200x1700|/api/talmud/vilna-pdf?tractate=Berakhot&daf=2a'
+    );
+  });
 });

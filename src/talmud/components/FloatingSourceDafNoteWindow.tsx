@@ -181,8 +181,10 @@ export const FloatingSourceDafNoteWindow: React.FC<FloatingSourceDafNoteWindowPr
   useEffect(() => {
     if (!request) return;
     const tr = resolveTractateMeta(request.tractateId);
-    let cleanDaf = (request.dafId || '2a').trim().toLowerCase();
-    if (/^\d+$/.test(cleanDaf)) cleanDaf = `${cleanDaf}a`;
+    let cleanDaf = (request.dafId || '2a').trim().toLowerCase().replace(/[()[\]\s]/g, '');
+    if (/^\d+:$/.test(cleanDaf)) cleanDaf = `${cleanDaf.slice(0, -1)}b`;
+    else if (/^\d+\.?$/.test(cleanDaf)) cleanDaf = `${cleanDaf.replace(/\.$/, '')}a`;
+    else cleanDaf = cleanDaf.replace(/\.$/, '');
     const nextSnippet =
       request.snippetHe || request.highlightSnippetHe || request.citeHe || '';
     setActiveTractateId(tr.id);
@@ -660,8 +662,8 @@ export const FloatingSourceDafNoteWindow: React.FC<FloatingSourceDafNoteWindowPr
     return { x: finalLeft, y: finalTop + beakYInWindow };
   })();
 
-  const borderColorHex = isDark ? '#C49A6C' : '#6B4226';
-  const bgColorHex = isDark ? '#1B120C' : '#FAF3E3';
+  const borderColorHex = isDark ? 'rgba(251, 191, 36, 0.56)' : 'rgba(217, 158, 58, 0.72)';
+  const bgColorHex = isDark ? 'rgba(22, 44, 76, 0.98)' : 'rgba(238, 246, 255, 0.98)';
 
   return createPortal(
     <>
@@ -731,12 +733,8 @@ export const FloatingSourceDafNoteWindow: React.FC<FloatingSourceDafNoteWindowPr
               }
         }
         onClick={(e) => e.stopPropagation()}
-        className={`pointer-events-auto relative flex flex-col transition-shadow duration-200 ${
-          isMaximized ? 'rounded-none border-0' : 'rounded-2xl border-2'
-        } ${
-          isDark
-            ? 'bg-[#1B120C]/98 border-[#C49A6C]/80 text-[#FAF5EB] shadow-[0_18px_48px_rgba(0,0,0,0.82)]'
-            : 'bg-[#FAF3E3]/98 border-[#6B4226]/80 text-[#2C1A10] shadow-[0_16px_44px_rgba(44,26,16,0.38)]'
+        className={`crystal-window-shell pointer-events-auto relative flex flex-col transition-shadow duration-200 ${
+          isMaximized ? 'rounded-none border-0' : 'rounded-3xl'
         }`}
       >
         {/* CALLOUT POINTER BEAK ATTACHED TO THE NOTE WINDOW BORDER POINTING TO THE ORIGIN LINK TEXT */}
@@ -744,55 +742,56 @@ export const FloatingSourceDafNoteWindow: React.FC<FloatingSourceDafNoteWindowPr
         {hasValidAnchor && !isMaximized && (
           <div
             aria-hidden="true"
+            className="crystal-window-beak"
             style={
               placement === 'bottom'
                 ? {
                     position: 'absolute',
-                    top: '-9px',
+                    top: '-8px',
                     left: `${beakXInWindow - 8}px`,
-                    width: '16px',
-                    height: '16px',
-                    backgroundColor: isDark ? '#2B1C12' : '#EAD9BC',
-                    borderTop: `2px solid ${borderColorHex}`,
-                    borderLeft: `2px solid ${borderColorHex}`,
+                    width: '15px',
+                    height: '15px',
+                    backgroundColor: bgColorHex,
+                    borderTop: `1.5px solid ${borderColorHex}`,
+                    borderLeft: `1.5px solid ${borderColorHex}`,
                     transform: 'rotate(45deg)',
                     zIndex: 30,
                   }
                 : placement === 'top'
                   ? {
                       position: 'absolute',
-                      bottom: '-9px',
+                      bottom: '-8px',
                       left: `${beakXInWindow - 8}px`,
-                      width: '16px',
-                      height: '16px',
+                      width: '15px',
+                      height: '15px',
                       backgroundColor: bgColorHex,
-                      borderBottom: `2px solid ${borderColorHex}`,
-                      borderRight: `2px solid ${borderColorHex}`,
+                      borderBottom: `1.5px solid ${borderColorHex}`,
+                      borderRight: `1.5px solid ${borderColorHex}`,
                       transform: 'rotate(45deg)',
                       zIndex: 30,
                     }
                   : placement === 'left'
                     ? {
                         position: 'absolute',
-                        right: '-9px',
+                        right: '-8px',
                         top: `${beakYInWindow - 8}px`,
-                        width: '16px',
-                        height: '16px',
+                        width: '15px',
+                        height: '15px',
                         backgroundColor: bgColorHex,
-                        borderTop: `2px solid ${borderColorHex}`,
-                        borderRight: `2px solid ${borderColorHex}`,
+                        borderTop: `1.5px solid ${borderColorHex}`,
+                        borderRight: `1.5px solid ${borderColorHex}`,
                         transform: 'rotate(45deg)',
                         zIndex: 30,
                       }
                     : {
                         position: 'absolute',
-                        left: '-9px',
+                        left: '-8px',
                         top: `${beakYInWindow - 8}px`,
-                        width: '16px',
-                        height: '16px',
+                        width: '15px',
+                        height: '15px',
                         backgroundColor: bgColorHex,
-                        borderBottom: `2px solid ${borderColorHex}`,
-                        borderLeft: `2px solid ${borderColorHex}`,
+                        borderBottom: `1.5px solid ${borderColorHex}`,
+                        borderLeft: `1.5px solid ${borderColorHex}`,
                         transform: 'rotate(45deg)',
                         zIndex: 30,
                       }
@@ -803,10 +802,10 @@ export const FloatingSourceDafNoteWindow: React.FC<FloatingSourceDafNoteWindowPr
         {/* INNER CLIPPED CONTAINER */}
         <div
           className={`flex flex-col flex-1 min-h-0 overflow-hidden ${
-            isMaximized ? '' : 'rounded-[14px]'
+            isMaximized ? '' : 'rounded-[22px]'
           }`}
         >
-          {/* TOP DRAGGABLE HEADER BAR WITH WINDOWS-STYLE MINIMIZE / MAXIMIZE / RESTORE / CLOSE CONTROLS */}
+          {/* TOP DRAGGABLE HEADER BAR WITH WINDOWS-STYLE 3D ORB CONTROLS */}
           <div
             onMouseDown={(e) => {
               if (isMaximized || (e.target as HTMLElement).closest('button')) return;
@@ -832,17 +831,15 @@ export const FloatingSourceDafNoteWindow: React.FC<FloatingSourceDafNoteWindowPr
                 initY: dragOffset.y,
               };
             }}
-            className={`px-2.5 py-1.5 border-b flex items-center justify-between gap-2 select-none shrink-0 ${
+            className={`crystal-window-header px-2.5 py-2 flex items-center justify-between gap-2 select-none shrink-0 ${
               isMaximized ? '' : 'cursor-move'
-            } ${
-              isDark
-                ? 'bg-gradient-to-r from-[#2B1C12] via-[#382417] to-[#24170F] border-[#C49A6C]/40'
-                : 'bg-gradient-to-r from-[#EAD9BC] via-[#DFC9A3] to-[#EAD9BC] border-[#8B5A2B]/40'
             }`}
           >
             <div className="flex items-center gap-1.5 min-w-0 flex-1">
               <GripHorizontal className="w-3.5 h-3.5 opacity-60 shrink-0" />
-              <BookOpen className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+              <span className="crystal-corner-orb w-6 h-6 shrink-0" data-tone="amber">
+                <BookOpen className="w-3 h-3" />
+              </span>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5 truncate">
                   <span className="text-[11.5px] font-black truncate">
@@ -850,20 +847,20 @@ export const FloatingSourceDafNoteWindow: React.FC<FloatingSourceDafNoteWindowPr
                   </span>
                   <span
                     dir="rtl"
-                    className="font-serif text-xs font-black text-amber-600 dark:text-amber-300 shrink-0"
+                    className="font-serif text-xs font-black text-amber-700 dark:text-amber-300 shrink-0"
                   >
                     ({currentTractate.nameHe} {dafMarkHe})
                   </span>
                 </div>
                 {resolvedOriginLabelKa && !isMinimized && (
-                  <div className="text-[9.5px] opacity-85 truncate">
+                  <div className="text-[9.5px] opacity-80 truncate">
                     ლინკიდან: {resolvedOriginLabelKa}
                   </div>
                 )}
               </div>
             </div>
 
-            {/* Right Side: Windows-Style Window Controls (— / □ / ✕) */}
+            {/* Right Side: 3D Crystal Orb Window Controls (— / □ / ⛶ / ✕) */}
             <div className="flex items-center gap-1.5 shrink-0">
               <WindowsWindowControls
                 size="sm"
@@ -883,50 +880,40 @@ export const FloatingSourceDafNoteWindow: React.FC<FloatingSourceDafNoteWindowPr
           {/* BODY OF FLOATING SOURCE DAF NOTE WINDOW (Hidden when minimized via `—`) */}
           {!isMinimized && (
             <>
-              {/* SECONDARY NAVIGATION, FOCUS & ZOOM TOOLBAR INSIDE THE NOTE WINDOW */}
-              <div
-                className={`px-2 py-1 border-b flex flex-wrap items-center justify-between gap-1 text-[10.5px] shrink-0 ${
-                  isDark
-                    ? 'bg-[#23170F] border-[#C49A6C]/30'
-                    : 'bg-[#F3E6CE] border-[#8B5A2B]/30'
-                }`}
-              >
-                {/* Prev / Next Daf Stepper + Re-Focus Button */}
-                <div className="flex items-center gap-1">
+              {/* SECONDARY NAVIGATION, FOCUS & ZOOM 3D ORB TOOLBAR INSIDE THE NOTE WINDOW */}
+              <div className="px-2 py-1.5 border-b border-amber-500/20 flex flex-wrap items-center justify-between gap-1.5 text-[10.5px] shrink-0">
+                {/* Prev / Next Daf Stepper + Re-Focus 3D Orb */}
+                <div className="crystal-selection-trough flex items-center gap-1">
                   <button
                     type="button"
+                    data-raw-btn="true"
                     onClick={handlePrevDafInNote}
-                    className={`px-1.5 py-0.5 rounded-lg border font-extrabold flex items-center gap-0.5 cursor-pointer ${
-                      isDark
-                        ? 'bg-[#160F0A] hover:bg-[#312015] border-[#C49A6C]/40 text-[#FAF5EB]'
-                        : 'bg-[#FAF5EB] hover:bg-[#E5D3B3] border-[#8B5A2B]/40 text-[#2C1A10]'
-                    }`}
+                    className="crystal-corner-orb w-6.5 h-6.5 cursor-pointer"
                     title="წინა დაფი"
                   >
-                    <ChevronRight className="w-3 h-3" />
+                    <ChevronRight className="w-3.5 h-3.5" />
                   </button>
 
-                  <span className="px-1.5 py-0.5 rounded-lg font-black bg-amber-500/15 border border-amber-500/35">
+                  <span className="px-2 py-0.5 rounded-full text-[10.5px] font-black bg-amber-500/18 border border-amber-400/50 text-amber-900 dark:text-amber-200 whitespace-nowrap">
                     {activeDafId} ({dafMarkHe})
                   </span>
 
                   <button
                     type="button"
+                    data-raw-btn="true"
                     onClick={handleNextDafInNote}
-                    className={`px-1.5 py-0.5 rounded-lg border font-extrabold flex items-center gap-0.5 cursor-pointer ${
-                      isDark
-                        ? 'bg-[#160F0A] hover:bg-[#312015] border-[#C49A6C]/40 text-[#FAF5EB]'
-                        : 'bg-[#FAF5EB] hover:bg-[#E5D3B3] border-[#8B5A2B]/40 text-[#2C1A10]'
-                    }`}
+                    className="crystal-corner-orb w-6.5 h-6.5 cursor-pointer"
                     title="შემდეგი დაფი"
                   >
-                    <ChevronLeft className="w-3 h-3" />
+                    <ChevronLeft className="w-3.5 h-3.5" />
                   </button>
 
                   <button
                     type="button"
+                    data-raw-btn="true"
+                    data-tone="amber"
                     onClick={() => setDeepLinkSeq((s) => s + 1)}
-                    className="px-2 py-0.5 rounded-lg bg-amber-600/90 hover:bg-amber-600 text-white font-extrabold flex items-center gap-1 cursor-pointer shadow-2xs"
+                    className="crystal-action-orb h-6.5 px-2.5 text-[10.5px] font-black cursor-pointer"
                     title="ზუსტად ციტირებულ მონაკვეთზე ფოკუსირება"
                   >
                     <Crosshair className="w-3 h-3" />
@@ -934,33 +921,36 @@ export const FloatingSourceDafNoteWindow: React.FC<FloatingSourceDafNoteWindowPr
                   </button>
                 </div>
 
-                {/* Zoom & Optional Open in Main View Controls */}
-                <div className="flex items-center gap-1">
+                {/* Zoom & Optional Open in Main View 3D Orb Controls */}
+                <div className="crystal-selection-trough flex items-center gap-1">
                   {loadingLiveSource && (
-                    <span className="inline-flex items-center gap-1 text-[9.5px] text-amber-500 font-bold mr-0.5">
-                      <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                    <span className="inline-flex items-center gap-1 text-[9.5px] text-amber-600 dark:text-amber-300 font-bold mr-0.5">
+                      <Loader2 className="w-3 h-3 animate-spin" />
                     </span>
                   )}
                   <button
                     type="button"
+                    data-raw-btn="true"
                     onClick={() => setNoteZoom((z) => Math.max(80, z - 15))}
-                    className="p-0.5 rounded border border-[#8B5A2B]/35 hover:bg-amber-500/20 cursor-pointer"
+                    className="crystal-corner-orb w-6.5 h-6.5 cursor-pointer"
                     title="დაპატარავება"
                   >
                     <ZoomOut className="w-3 h-3" />
                   </button>
                   <button
                     type="button"
+                    data-raw-btn="true"
                     onClick={() => setNoteZoom(100)}
-                    className="px-1 py-0.5 rounded border border-[#8B5A2B]/35 text-[9.5px] font-black cursor-pointer"
+                    className="crystal-action-orb h-6.5 px-2 text-[9.5px] font-black cursor-pointer tabular-nums"
                     title="საწყისი ზომა (100%)"
                   >
                     {noteZoom}%
                   </button>
                   <button
                     type="button"
+                    data-raw-btn="true"
                     onClick={() => setNoteZoom((z) => Math.min(220, z + 15))}
-                    className="p-0.5 rounded border border-[#8B5A2B]/35 hover:bg-amber-500/20 cursor-pointer"
+                    className="crystal-corner-orb w-6.5 h-6.5 cursor-pointer"
                     title="გადიდება"
                   >
                     <ZoomIn className="w-3 h-3" />
@@ -969,14 +959,16 @@ export const FloatingSourceDafNoteWindow: React.FC<FloatingSourceDafNoteWindowPr
                   {effectiveOpenInMainTalmud && (
                     <button
                       type="button"
+                      data-raw-btn="true"
+                      data-tone="sky"
                       onClick={() => {
                         effectiveOpenInMainTalmud(currentTractate.id, activeDafId);
                         onClose();
                       }}
                       title="ამ დაფის მთავარ ეკრანზე გახსნა"
-                      className="px-1.5 py-0.5 rounded-lg bg-[#6B4226]/85 hover:bg-[#6B4226] text-[#FAF5EB] text-[9.5px] font-extrabold flex items-center gap-1 cursor-pointer"
+                      className="crystal-action-orb h-6.5 px-2 text-[10px] font-black cursor-pointer"
                     >
-                      <ExternalLink className="w-2.5 h-2.5" />
+                      <ExternalLink className="w-3 h-3" />
                       <span className="hidden sm:inline">მთავარში</span>
                     </button>
                   )}
@@ -1018,7 +1010,7 @@ export const FloatingSourceDafNoteWindow: React.FC<FloatingSourceDafNoteWindowPr
                   pinchRef.current = null;
                 }}
                 style={{ overscrollBehavior: 'contain' }}
-                className="flex-1 min-h-0 overflow-auto overscroll-contain p-1.5 bg-[#F2E6CF] dark:bg-[#140D08]"
+                className="flex-1 min-h-0 overflow-auto overscroll-contain p-1.5 bg-sky-50/70 dark:bg-[#0A172B]"
               >
                 <div
                   style={{
@@ -1031,9 +1023,7 @@ export const FloatingSourceDafNoteWindow: React.FC<FloatingSourceDafNoteWindowPr
                   <div className="sticky top-0 z-30 mb-1.5 flex justify-center">
                     <div
                       role="tablist"
-                      className={`inline-flex gap-1 rounded-full border p-0.5 text-[11px] font-semibold shadow-sm backdrop-blur ${
-                        isDark ? 'border-amber-900/50 bg-black/60' : 'border-amber-800/25 bg-white/75'
-                      }`}
+                      className="crystal-selection-trough inline-flex gap-1 text-[11px] font-bold backdrop-blur-md"
                     >
                       {([
                         ['classic', 'კლასიკური დაფი'],
@@ -1042,15 +1032,17 @@ export const FloatingSourceDafNoteWindow: React.FC<FloatingSourceDafNoteWindowPr
                         <button
                           key={key}
                           type="button"
+                          data-raw-btn="true"
+                          data-tone={viewTab === key ? 'amber' : undefined}
                           role="tab"
                           aria-selected={viewTab === key}
                           onClick={() => setViewTab(key)}
-                          className={`rounded-full px-3 py-1 transition-colors ${
+                          className={`rounded-full px-3 py-1 text-[11px] font-black transition-all cursor-pointer ${
                             viewTab === key
-                              ? 'bg-amber-700 text-amber-50'
+                              ? 'crystal-action-orb'
                               : isDark
-                                ? 'text-amber-200/80'
-                                : 'text-amber-900/80'
+                                ? 'text-sky-100/80 hover:text-white'
+                                : 'text-sky-950/80 hover:text-sky-950'
                           }`}
                         >
                           {label}
@@ -1110,20 +1102,14 @@ export const FloatingSourceDafNoteWindow: React.FC<FloatingSourceDafNoteWindowPr
 
               {/* BOTTOM FOCUSED SEGMENT SUMMARY & GEORGIAN TRANSLATION STRIP */}
               {primarySentence && (
-                <div
-                  className={`px-2.5 py-1.5 border-t text-xs shrink-0 max-h-[88px] overflow-y-auto ${
-                    isDark
-                      ? 'bg-[#22160E] border-[#C49A6C]/35 text-[#FAF5EB]'
-                      : 'bg-[#EFE1C6] border-[#8B5A2B]/35 text-[#2C1A10]'
-                  }`}
-                >
+                <div className="crystal-window-header px-2.5 py-2 border-t border-amber-500/25 text-xs shrink-0 max-h-[88px] overflow-y-auto">
                   <div className="flex items-center justify-between gap-2 mb-0.5">
-                    <span className="font-extrabold text-[10.5px] text-[#8B5A2B] dark:text-amber-300 truncate">
+                    <span className="font-extrabold text-[10.5px] text-amber-700 dark:text-amber-300 truncate">
                       🎯 ფოკუსირებული მონაკვეთი ({currentTractate.nameKa} {activeDafId}):
                     </span>
                     <span
                       dir="rtl"
-                      className="font-serif font-bold text-[11px] text-amber-700 dark:text-amber-300 truncate max-w-[55%]"
+                      className="font-serif font-bold text-[11px] text-amber-800 dark:text-amber-200 truncate max-w-[55%]"
                     >
                       {focusedSegmentInfo?.lineTextHe || activeCiteHe}
                     </span>

@@ -1,9 +1,9 @@
 // @ts-nocheck
-import React, { useEffect, useRef, useState, useMemo, useCallback, useId } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useMemo, useCallback, useId } from 'react';
 import { createPortal } from 'react-dom';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { needsPdfPolyfills } from '../utils/pdfPolyfills';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
-import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import { Loader2, ChevronUp, ChevronDown, GripHorizontal, X, Copy, BookOpen, Check, Trash2 } from 'lucide-react';
 import {
   DafPageData,
@@ -27,12 +27,14 @@ import { PdfSharpZoomTile } from './PdfSharpZoomTile';
 import { PdfInkHighlight } from './PdfInkHighlight';
 import { PdfGemaraBoldOverlay } from './PdfGemaraBoldOverlay';
 import {
-  findRashiSegmentForHotspot,
+  buildSearchHitRowBoxes,
+  findCommentarySegmentForHotspot,
   mergeSpotsIntoRowBoxes,
   resolveHighlightRangeIndices,
-  segmentRashiHotspots,
+  segmentCommentaryHotspots,
   type PdfHighlightColor,
   type PdfProgressHighlight,
+  type RashiFocusSegment,
 } from '../utils/vilnaPdfReadingTools';
 import { DafSearchPanel } from './DafSearchPanel';
 import type { DafSearchHit } from '../utils/dafSearch';
@@ -49,17 +51,19 @@ import {
   repairSiddurOcrLine,
   lookupSiddurLineTranslationKa,
 } from '../utils/siddurPdfCanonicalFixer';
-import { tintCitationHotspotsBlueOnCanvas, tintHotspotsInkOnCanvas, RASHI_INK, TOSAFOT_INK } from '../utils/pdfCitationTint';
-import { buildDibburHamatchilLinks, splitSideAt } from '../utils/dibburHamatchilMatcher';
+import { tintCitationHotspotsBlueOnCanvas, tintHotspotsInkOnCanvas, RASHI_INK, TOSAFOT_INK, HACHI_GARSINAN_INK, DUPLICATE_GEMARA_INK } from '../utils/pdfCitationTint';
+import { buildDibburHamatchilLinks, pickDhFocusTargets, splitSideAt } from '../utils/dibburHamatchilMatcher';
 import { decodeLegacyHebrewItems } from '../utils/legacyHebrewFont';
 import {
   CrystalDiamondJumpButton,
   WindowsWindowControls,
 } from './WindowsWindowControls';
+import { GazeNavigationOverlay } from './GazeNavigationOverlay';
+import type { ResolvedGazeTarget } from '../utils/gazeGemaraTargetResolver';
 
-// Configure PDF.js worker using Vite asset URL (with public static fallback)
+// Configure PDF.js worker using static public legacy worker (avoids Vite dev module transform / ?import failures)
 if (typeof window !== 'undefined') {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = needsPdfPolyfills ? '/pdf.worker.polyfilled.mjs' : (pdfWorkerUrl || '/pdf.worker.min.mjs');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = needsPdfPolyfills ? '/pdf.worker.polyfilled.mjs' : '/pdf.worker.min.mjs';
 }
 
 export type MarginCommentaryType =
@@ -214,12 +218,39 @@ interface VilnaPdfInteractiveViewerProps {
   enableGemaraBoldToggle?: boolean;
   gemaraBoldActive?: boolean;
   enableRashiFocusMode?: boolean;
+  enableCommentaryJumpSpotlight?: boolean;
   focusedRashiSegmentId?: string | null;
   onChangeFocusedRashiSegment?: (seg: { segmentId: string; labelHe: string } | null) => void;
+  audioSyncHighlightHotspotIds?: ReadonlySet<string> | null;
+  audioSyncAutoScroll?: boolean;
+  onHotspotsExtracted?: (hotspots: VilnaPdfHotspot[]) => void;
+  onAudioSyncHotspotClick?: (hotspot: VilnaPdfHotspot) => boolean;
 }
 
 // Bundled Vilna PDFs (public/vilna-pdf/). Empty: every daf currently loads from the online scan source.
 const EXACT_VILNA_PDF_MAP: Record<string, string> = {};
+
+const SUPPORTED_VILNA_BAVLI_TRACTATES = new Set([
+  'berakhot', 'shabbat', 'eruvin', 'pesachim', 'shekalim', 'yoma', 'sukkah', 'beitzah',
+  'rosh_hashanah', 'taanit', 'megillah', 'moed_katan', 'chagigah', 'yevamot', 'ketubot',
+  'nedarim', 'nazir', 'sotah', 'gittin', 'kiddushin', 'bava_kamma', 'bava_metzia',
+  'bava_batra', 'sanhedrin', 'makkot', 'shevuot', 'avodah_zarah', 'horayot', 'zevachim',
+  'menachot', 'chullin', 'bekhorot', 'arakhin', 'temurah', 'keritot', 'meilah', 'tamid', 'niddah',
+  // Common alternate spellings normalized before request
+  'berachos', 'shabbos', 'taanis', 'kesubos', 'yevamos', 'makkos', 'shevuos', 'horayos',
+  'menachos', 'bechoros', 'kereisos', 'beitza', 'baba_kamma', 'baba_metzia', 'baba_batra',
+]);
+
+/** True when a Bavli/Vilna Shas scan exists on the proxy for the given tractate & daf. */
+export function isSupportedVilnaBavliScan(tractateId: string, dafId: string): boolean {
+  const normTr = String(tractateId || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (!SUPPORTED_VILNA_BAVLI_TRACTATES.has(normTr)) return false;
+  let cleanDaf = String(dafId || '').trim().toLowerCase().replace(/[()[\]\s]/g, '');
+  if (/^\d{1,3}:$/.test(cleanDaf)) cleanDaf = `${cleanDaf.slice(0, -1)}b`;
+  else if (/^\d{1,3}\.?$/.test(cleanDaf)) cleanDaf = `${cleanDaf.replace(/\.$/, '')}a`;
+  else cleanDaf = cleanDaf.replace(/\.$/, '');
+  return /^(\d{1,3})([ab])$/.test(cleanDaf);
+}
 
 /** True only when the real printed scan of this exact daf ships with the app. */
 export function hasAuthenticVilnaScan(tractateId: string, dafId: string): boolean {
@@ -2001,10 +2032,16 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
   enableGemaraBoldToggle = false,
   gemaraBoldActive = false,
   enableRashiFocusMode = false,
+  enableCommentaryJumpSpotlight = false,
   focusedRashiSegmentId = null,
   onChangeFocusedRashiSegment,
+  audioSyncHighlightHotspotIds = null,
+  audioSyncAutoScroll = false,
+  onHotspotsExtracted,
+  onAudioSyncHotspotClick,
 }) => {
   const rashiFocusMaskId = useId();
+  const prefersReducedMotion = useReducedMotion();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const pdfPageRef = useRef<any>(null);
   const tintDataRef = useRef<any>(null);
@@ -2019,6 +2056,51 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
   const [biblicalCitation, setBiblicalCitation] = useState(null);
   const isAmudBet = dafData.dafId.endsWith('b');
   const isSiddurPdf = dafData.tractateId.startsWith('Siddur_');
+  const lastAudioScrollIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    onHotspotsExtracted?.(hotspots);
+  }, [hotspots, onHotspotsExtracted]);
+
+  const audioSyncActiveSpotIds = useMemo(() => {
+    if (!audioSyncHighlightHotspotIds || audioSyncHighlightHotspotIds.size === 0) {
+      return new Set<string>();
+    }
+    const allowed = new Set<string>();
+    for (const h of hotspots) {
+      if (
+        (h.section === 'mishnah' || h.section === 'gemara') &&
+        !h.isSmallMarker &&
+        audioSyncHighlightHotspotIds.has(h.id)
+      ) {
+        allowed.add(h.id);
+      }
+    }
+    return allowed;
+  }, [hotspots, audioSyncHighlightHotspotIds]);
+
+  const audioSyncHighlightBoxes = useMemo(() => {
+    if (audioSyncActiveSpotIds.size === 0) return [];
+    const activeSpots = hotspots.filter((h) => audioSyncActiveSpotIds.has(h.id));
+    return mergeSpotsIntoRowBoxes(activeSpots);
+  }, [hotspots, audioSyncActiveSpotIds]);
+
+  useEffect(() => {
+    if (!audioSyncAutoScroll || audioSyncActiveSpotIds.size === 0) {
+      lastAudioScrollIdRef.current = null;
+      return;
+    }
+    const activeList = Array.from(audioSyncActiveSpotIds);
+    const phraseKey = activeList.join(',');
+    const firstId = activeList[0];
+    if (!firstId || lastAudioScrollIdRef.current === phraseKey) return;
+    lastAudioScrollIdRef.current = phraseKey;
+    if (document.body.dataset.talmudPanning === 'true') return;
+    const el = document.getElementById(`pdf-hotspot-${firstId}`);
+    if (el instanceof HTMLElement) {
+      scrollToTarget(el, { settleMs: 120 });
+    }
+  }, [audioSyncAutoScroll, audioSyncActiveSpotIds]);
 
   // Selection state supporting both single word AND classic copy/paste multi-word range
   const [selectedRange, setSelectedRange] = useState<{
@@ -2043,10 +2125,39 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
 
   // Marker navigation is independent of the two-stage word-selection workflow.
   const [blinkingTarget, setBlinkingTarget] = useState<BlinkingTargetRegion | null>(null);
+  const [jumpSpotlightSegment, setJumpSpotlightSegment] = useState<RashiFocusSegment | null>(null);
   const [searchHitIds, setSearchHitIds] = useState<Set<string>>(() => new Set());
+  const [searchHits, setSearchHits] = useState<DafSearchHit[]>([]);
+  const [activeSearchHitIds, setActiveSearchHitIds] = useState<Set<string>>(() => new Set());
   const onSearchHits = useCallback((hits: DafSearchHit[]) => {
-    setSearchHitIds(new Set(hits.flatMap((h) => h.ids)));
+    setSearchHits(hits);
+    const nextIds = new Set(hits.flatMap((h) => h.ids));
+    setSearchHitIds(nextIds);
+    setActiveSearchHitIds((prev) => {
+      if (prev.size === 0) return prev;
+      const stillMatches = hits.some(
+        (h) => h.ids.length === prev.size && h.ids.every((id) => prev.has(id))
+      );
+      return stillMatches ? prev : new Set();
+    });
   }, []);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onSearchState = (e: Event) => {
+      const open = Boolean((e as CustomEvent<{ open?: boolean }>).detail?.open);
+      if (!open) {
+        setActiveSearchHitIds(new Set());
+        setSearchHits([]);
+        setSearchHitIds(new Set());
+      }
+    };
+    window.addEventListener('talmud-daf-search-state', onSearchState);
+    return () => window.removeEventListener('talmud-daf-search-state', onSearchState);
+  }, []);
+  const searchHighlightBoxes = useMemo(
+    () => buildSearchHitRowBoxes(hotspots, searchHits, activeSearchHitIds),
+    [hotspots, searchHits, activeSearchHitIds]
+  );
 
   // Drag / Long-press Copy/Paste state
   const [isDraggingSelection, setIsDraggingSelection] = useState<boolean>(false);
@@ -2109,6 +2220,13 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
     height: number;
   } | null>(null);
   const [copyToastText, setCopyToastText] = useState<string | null>(null);
+  const selectionPopoverRef = useRef<HTMLDivElement | null>(null);
+  const [selectionPopoverPos, setSelectionPopoverPos] = useState<{
+    left: number;
+    top: number;
+    arrowLeft: number;
+    placement: 'below' | 'above';
+  } | null>(null);
   const lineBoxPinchRef = useRef<{ startDist: number; startZoom: number } | null>(null);
   const [stoppedLineRect, setStoppedLineRect] = useState<{
     top: number;
@@ -2804,7 +2922,14 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
     setShowRangeHandles(false);
     setBlinkingTarget(null);
     setInternalPdfReturnPoint(null);
+    setJumpSpotlightSegment(null);
   }, [dafKey]);
+
+  useEffect(() => {
+    if (!enableCommentaryJumpSpotlight) {
+      setJumpSpotlightSegment(null);
+    }
+  }, [enableCommentaryJumpSpotlight]);
 
   // Restore exact PDF row / word range when returning from a cited source via the Return button
   const lastRestoredSeqRef = useRef<number>(0);
@@ -2915,6 +3040,7 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
   // and tint ONLY the letters of linked citations in Royal Blue (#1D4ED8)!
   useEffect(() => {
     let isCancelled = false;
+    const effectController = new AbortController();
     let renderTask: pdfjsLib.RenderTask | null = null;
     let loadingTask: pdfjsLib.PDFDocumentLoadingTask | null = null;
 
@@ -2949,6 +3075,12 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
       try {
         const fetchValidPdfBuffer = async (urlToFetch: string): Promise<ArrayBuffer> => {
           const controller = new AbortController();
+          const onEffectAbort = () => controller.abort();
+          if (effectController.signal.aborted) {
+            controller.abort();
+          } else {
+            effectController.signal.addEventListener('abort', onEffectAbort, { once: true });
+          }
           const timer = setTimeout(
             () => controller.abort(),
             urlToFetch.startsWith('/api/talmud/vilna-pdf') ? 20000 : 6500
@@ -2956,7 +3088,9 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
           try {
             const resp = await fetch(urlToFetch, { signal: controller.signal });
             if (!resp.ok) {
-              throw new Error(`Failed to fetch PDF: ${resp.status}`);
+              const err = new Error(`Failed to fetch PDF: ${resp.status}`) as Error & { status?: number };
+              err.status = resp.status;
+              throw err;
             }
             const buf = await resp.arrayBuffer();
             const head = new Uint8Array(buf.slice(0, 5));
@@ -2973,12 +3107,22 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
             return buf;
           } finally {
             clearTimeout(timer);
+            effectController.signal.removeEventListener('abort', onEffectAbort);
           }
         };
 
         let arrayBuffer: ArrayBuffer;
         let isUsingFallbackClone = false;
         const isTalmudApiScan = activePdfUrl.startsWith('/api/talmud/vilna-pdf');
+        if (isTalmudApiScan && !isSupportedVilnaBavliScan(dafData.tractateId, dafData.dafId)) {
+          if (!isCancelled) {
+            setPdfLoadError('ვილნას ბავლის სკანი ამ ტრაქტატისთვის არ მოიძებნა');
+            setHotspots([]);
+            setPdfLoadFailed(true);
+            setLoadingPdf(false);
+          }
+          return;
+        }
         // A scan already stored on this device opens without touching the network at all.
         const cachedScan = isTalmudApiScan ? await readCachedDafPdf(activePdfUrl) : null;
         if (cachedScan) {
@@ -2987,8 +3131,13 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
           try {
             arrayBuffer = await fetchValidPdfBuffer(activePdfUrl);
           } catch (firstErr) {
+            const status = (firstErr as { status?: number })?.status;
             if (isTalmudApiScan) {
-              // Never show another daf's scan: its layout would not match this daf's text.
+              // Never show another daf's scan, and do not retry permanent 400/404 responses.
+              if (status === 400 || status === 404) {
+                if (!isCancelled) setPdfLoadFailed(true);
+                throw firstErr;
+              }
               try {
                 arrayBuffer = await fetchValidPdfBuffer(activePdfUrl);
               } catch {
@@ -3270,22 +3419,54 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
             const { roles } = buildDibburHamatchilLinks(parsed);
             for (const [id, role] of roles) {
               if (citSet.has(id)) continue;
-              if (role.splitWord) dhColors.set(id, { first: RASHI_INK, second: TOSAFOT_INK });
-              else if (role.rashi) dhColors.set(id, { first: RASHI_INK });
-              else if (role.tosafot) dhColors.set(id, { first: TOSAFOT_INK });
+              if (role.splitWord) {
+                dhColors.set(id, {
+                  first: role.rashiHachi ? HACHI_GARSINAN_INK : RASHI_INK,
+                  second: role.tosafotHachi ? HACHI_GARSINAN_INK : TOSAFOT_INK,
+                });
+              } else if (role.hachiGarsinan) {
+                dhColors.set(id, { first: HACHI_GARSINAN_INK });
+              } else if (role.rashi) {
+                dhColors.set(id, { first: RASHI_INK });
+              } else if (role.tosafot) {
+                dhColors.set(id, { first: TOSAFOT_INK });
+              } else if (role.duplicateGemara) {
+                dhColors.set(id, { first: DUPLICATE_GEMARA_INK });
+              }
             }
             if (!alreadyTinted) tintHotspotsInkOnCanvas(ctx, canvas.width, canvas.height, parsed, dhColors);
             tintDataRef.current = { parsed, citSet, dhColors };
           } catch {
             // ignore
           }
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('talmud-base-canvas-painted', { detail: { base: canvas } }));
+          }
         }
       } catch (err) {
+        const errName = String((err as Error)?.name || '');
         const errMsg = String((err as Error)?.message || err || '').toLowerCase();
-        if (isCancelled || errMsg.includes('cancel') || errMsg.includes('abort')) {
+        const causeErr = (err as { cause?: Error })?.cause;
+        const causeName = String(causeErr?.name || '');
+        const causeMsg = String(causeErr?.message || '').toLowerCase();
+        if (
+          isCancelled ||
+          errName === 'AbortError' ||
+          errName === 'AbortException' ||
+          errName === 'RenderingCancelledException' ||
+          causeName === 'AbortError' ||
+          errMsg.includes('cancel') ||
+          errMsg.includes('abort') ||
+          causeMsg.includes('abort')
+        ) {
           return;
         }
-        console.error('[vilna-pdf] render failed', err);
+        const errStatus = (err as { status?: number })?.status;
+        if (typeof errStatus === 'number') {
+          console.warn('[vilna-pdf] scan unavailable', errStatus, activePdfUrl);
+        } else {
+          console.error('[vilna-pdf] render failed', err);
+        }
         if (!isCancelled) {
           setPdfLoadError(String((err as Error)?.message || err || '').slice(0, 140));
           setHotspots([]);
@@ -3302,6 +3483,7 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
 
     return () => {
       isCancelled = true;
+      effectController.abort();
       if (renderTask) {
         try {
           renderTask.cancel();
@@ -3311,7 +3493,7 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
       }
       if (loadingTask) {
         try {
-          loadingTask.destroy();
+          void Promise.resolve(loadingTask.destroy()).catch(() => {});
         } catch {
           // ignore
         }
@@ -3587,6 +3769,27 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
     }, 2400);
   }, [selectedHotspotsSlice]);
 
+  const selectedPreviewTextHe = useMemo(() => {
+    return selectedHotspotsSlice
+      .filter((h) => !h.isSmallMarker && h.word)
+      .map((h) => h.word.trim())
+      .filter(Boolean)
+      .join(' ');
+  }, [selectedHotspotsSlice]);
+
+  const selectedWordsCount = useMemo(
+    () => selectedHotspotsSlice.filter((h) => !h.isSmallMarker).length,
+    [selectedHotspotsSlice]
+  );
+
+  const selectedSectionLabelKa = useMemo(() => {
+    const sec = selectedHotspotsSlice.find((h) => !h.isSmallMarker)?.section;
+    if (sec === 'rashi') return 'რაში';
+    if (sec === 'tosafot') return 'თოსაფოთი';
+    if (sec === 'gemara') return 'გემარა';
+    return null;
+  }, [selectedHotspotsSlice]);
+
   // Combined Line + Selected Additional Text target when autoTranslateLineMode is ON
   const activeLineTranslationTarget = useMemo(() => {
     if (!activeStoppedLine) return null;
@@ -3811,10 +4014,11 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
       const ids = new Set(fromMain ? link.dhIds : link.mainIds);
       const targets = hotspots.filter((x) => ids.has(x.id));
       if (targets.length === 0) return false;
-      const left = Math.min(...targets.map((t) => t.leftPct));
-      const top = Math.min(...targets.map((t) => t.topPct));
-      const right = Math.max(...targets.map((t) => t.leftPct + t.widthPct));
-      const bottom = Math.max(...targets.map((t) => t.topPct + t.heightPct));
+      const focusTargets = pickDhFocusTargets(targets, fromMain);
+      const left = Math.min(...focusTargets.map((t) => t.leftPct));
+      const top = Math.min(...focusTargets.map((t) => t.topPct));
+      const right = Math.max(...focusTargets.map((t) => t.leftPct + t.widthPct));
+      const bottom = Math.max(...focusTargets.map((t) => t.topPct + t.heightPct));
       const isRashi = link.commentator === 'rashi';
       const scrollEl = pageContainerRef.current ? findScrollParent(pageContainerRef.current) : null;
       const readScroll = () => (scrollEl ? scrollEl.scrollTop : window.scrollY);
@@ -3835,6 +4039,19 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
       const dhText = hotspots.filter((x) => link.dhIds.includes(x.id)).map((x) => x.word).join(' ');
       setSelectedRange(null);
       setShowRangeHandles(false);
+      if (fromMain && enableCommentaryJumpSpotlight) {
+        const commSeg = findCommentarySegmentForHotspot(
+          focusTargets[0]?.id || link.dhIds[0],
+          hotspots,
+          link.commentator
+        );
+        setJumpSpotlightSegment(commSeg);
+      } else {
+        setJumpSpotlightSegment(null);
+        if (!fromMain && focusedRashiSegmentId && onChangeFocusedRashiSegment) {
+          onChangeFocusedRashiSegment(null);
+        }
+      }
       setBlinkingTarget({
         key: `dh:${link.key}:${Date.now()}`,
         labelHe: isRashi ? 'רש״י' : 'תוספות',
@@ -3865,12 +4082,12 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
         })
       );
       requestAnimationFrame(() => {
-        const el = pageContainerRef.current?.querySelector(`[id="pdf-hotspot-${targets[0].id}"]`);
+        const el = pageContainerRef.current?.querySelector(`[id="pdf-hotspot-${focusTargets[0].id}"]`);
         if (el instanceof HTMLElement) scrollToTarget(el);
       });
       return true;
     },
-    [dibburLinks, hotspots, citationHotspotIdsSet]
+    [dibburLinks, hotspots, citationHotspotIdsSet, enableCommentaryJumpSpotlight, focusedRashiSegmentId, onChangeFocusedRashiSegment]
   );
 
   // Search result: same glow and settle-then-scroll path as a dibbur-hamatchil jump.
@@ -3884,6 +4101,7 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
       const bottom = Math.max(...targets.map((t) => t.topPct + t.heightPct));
       setSelectedRange(null);
       setShowRangeHandles(false);
+      setActiveSearchHitIds(new Set(hit.ids));
       setBlinkingTarget({
         key: `dh:search:${Date.now()}`,
         labelHe: 'חיפוש',
@@ -4051,9 +4269,12 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
 
   const focusedRashiSegment = useMemo(() => {
     if (!enableRashiFocusMode || !focusedRashiSegmentId || hotspots.length === 0) return null;
-    const segments = segmentRashiHotspots(hotspots);
+    const section = focusedRashiSegmentId.startsWith('tosafot-seg-') ? 'tosafot' : 'rashi';
+    const segments = segmentCommentaryHotspots(hotspots, section);
     return segments.find((seg) => seg.segmentId === focusedRashiSegmentId) ?? null;
   }, [enableRashiFocusMode, focusedRashiSegmentId, hotspots]);
+
+  const activeSpotlightSegment = jumpSpotlightSegment ?? focusedRashiSegment;
 
   // Cross-Commentary Highlighting (Requirement 1):
   // Highlights matching places in Rashi, Tosafot, and Margin Commentaries (including הגהות הב"ח, מסורת הש"ס, עין משפט, תורה אור)!
@@ -4828,6 +5049,7 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
     const citationEndIdx = bookIdx + (citation.verse ? 2 : 1);
     if (bookIdx < 0 || spotIdx < bookIdx || spotIdx > citationEndIdx) return false;
     setSelectedRange(null); setShowRangeHandles(false);
+    setJumpSpotlightSegment(null);
     setBiblicalCitation(citation);
     return true;
   };
@@ -4861,6 +5083,12 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
 
     const clickedHotspot = hotspots[idx];
     if (!clickedHotspot) return;
+    if (activeSearchHitIds.size > 0) {
+      setActiveSearchHitIds(new Set());
+    }
+    if (jumpSpotlightSegment && !jumpSpotlightSegment.spotIds.has(clickedHotspot.id)) {
+      setJumpSpotlightSegment(null);
+    }
     if (openBiblicalCitation(idx)) return;
 
     // When tapping on an index marker (either in text or in the margin commentary):
@@ -4969,8 +5197,12 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
     }
 
     if (enableRashiFocusMode && onChangeFocusedRashiSegment && !clickedHotspot.isSmallMarker && !showRangeHandles) {
-      if (clickedHotspot.section === 'rashi') {
-        const seg = findRashiSegmentForHotspot(clickedHotspot.id, hotspots);
+      if (clickedHotspot.section === 'rashi' || clickedHotspot.section === 'tosafot') {
+        const seg = findCommentarySegmentForHotspot(
+          clickedHotspot.id,
+          hotspots,
+          clickedHotspot.section
+        );
         if (seg) {
           onChangeFocusedRashiSegment(
             focusedRashiSegmentId === seg.segmentId
@@ -4988,6 +5220,85 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
       setSelectedRange(null);
     }
   };
+
+  const executeGazeBlueMarkerRef = useRef<(target: ResolvedGazeTarget<VilnaPdfHotspot>) => boolean>(
+    () => false
+  );
+  executeGazeBlueMarkerRef.current = (target: ResolvedGazeTarget<VilnaPdfHotspot>): boolean => {
+    const h = target.hotspot;
+    const idx = hotspots.findIndex((x) => x.id === h.id);
+    if (idx < 0) return false;
+    if (openBiblicalCitation(idx)) return true;
+    if (h.isSmallMarker || h.marginEntryKey) {
+      setSelectedRange(null);
+      setShowRangeHandles(false);
+      if (triggerJumpAndBlinkForMarker(h)) return true;
+    }
+    const detectedCitation = resolvePdfHotspotDafCitation(
+      idx,
+      hotspots,
+      dafData.tractateId,
+      tractateNameHe,
+      tractateNameKa
+    );
+    if (detectedCitation) {
+      const isSameDaf =
+        (!detectedCitation.tractateId ||
+          detectedCitation.tractateId.toLowerCase() === dafData.tractateId.toLowerCase()) &&
+        (!detectedCitation.dafId ||
+          detectedCitation.dafId.toLowerCase() === dafData.dafId.toLowerCase());
+      setSelectedRange(null);
+      setShowRangeHandles(false);
+      if (isSameDaf) {
+        return triggerFocusForSameDafCitation(detectedCitation, h);
+      }
+      if (onNavigateToCitation) {
+        const secLabelKa =
+          h.section === 'tosafot'
+            ? 'თოსაფოთი'
+            : h.section === 'rashi'
+              ? 'რაში'
+              : h.section === 'margin'
+                ? 'კიდის კომენტარი'
+                : 'გემარა';
+        onNavigateToCitation(
+          detectedCitation.tractateId,
+          detectedCitation.dafId,
+          detectedCitation.citeHe,
+          {
+            fromPdfRowId: h.rowId,
+            fromPdfSelectedRange: {
+              startIdx: detectedCitation.startIdx,
+              endIdx: detectedCitation.endIdx,
+            },
+            sourceLabelKa: `${tractateNameKa} ${dafData.dafId} • ${secLabelKa}`,
+            sourceLabelHe: detectedCitation.citeHe,
+            contextSnippetHe: detectedCitation.contextSnippetHe,
+            anchorRect: {
+              top: target.rect.top,
+              bottom: target.rect.bottom,
+              left: target.rect.left,
+              right: target.rect.right,
+              width: target.rect.width,
+              height: target.rect.height,
+            },
+          }
+        );
+        return true;
+      }
+    }
+    return false;
+  };
+
+  const handleExecuteGazeJump = useCallback(
+    (target: ResolvedGazeTarget<VilnaPdfHotspot>) => {
+      if (target.targetKind === 'blue-marker') {
+        return executeGazeBlueMarkerRef.current(target);
+      }
+      return jumpToDibbur(target.hotspot, target.splitClientX, target.rect as unknown as DOMRect);
+    },
+    [jumpToDibbur]
+  );
 
   const startHandleDrag = (
     e: React.MouseEvent | React.TouchEvent,
@@ -5010,6 +5321,71 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
 
   const isSingleSmallMarkerSelected =
     selectedHotspotsSlice.length === 1 && Boolean(selectedHotspotsSlice[0]?.isSmallMarker);
+
+  const shouldRenderSelectionPopover = Boolean(
+    typeof document !== 'undefined' &&
+      selectedUnionScreenRect &&
+      selectedRange &&
+      showRangeHandles &&
+      !isDraggingSelection &&
+      !isSingleSmallMarkerSelected
+  );
+
+  useLayoutEffect(() => {
+    if (!shouldRenderSelectionPopover || !selectedUnionScreenRect || typeof window === 'undefined') {
+      setSelectionPopoverPos(null);
+      return;
+    }
+
+    const computePos = () => {
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const el = selectionPopoverRef.current;
+      const fallbackW = enableProgressHighlight ? 336 : 292;
+      const fallbackH = 82;
+      const w = Math.min(vw - 24, el?.offsetWidth || fallbackW);
+      const h = el?.offsetHeight || fallbackH;
+
+      const anchorCenterX = selectedUnionScreenRect.left + selectedUnionScreenRect.width / 2;
+      const left = Math.max(12, Math.min(vw - w - 12, anchorCenterX - w / 2));
+      const arrowLeft = Math.max(20, Math.min(w - 20, anchorCenterX - left));
+
+      const belowTop = selectedUnionScreenRect.bottom + 36;
+      const aboveTop = selectedUnionScreenRect.top - h - 16;
+      let placement: 'below' | 'above' = 'below';
+      let top = belowTop;
+
+      if (belowTop + h > vh - 86) {
+        if (aboveTop >= 58) {
+          placement = 'above';
+          top = aboveTop;
+        } else {
+          top = Math.max(58, Math.min(vh - h - 86, belowTop));
+        }
+      }
+
+      setSelectionPopoverPos({ left, top, arrowLeft, placement });
+    };
+
+    computePos();
+    const ro =
+      typeof ResizeObserver !== 'undefined' && selectionPopoverRef.current
+        ? new ResizeObserver(() => computePos())
+        : null;
+    if (ro && selectionPopoverRef.current) ro.observe(selectionPopoverRef.current);
+    window.addEventListener('resize', computePos);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener('resize', computePos);
+    };
+  }, [
+    shouldRenderSelectionPopover,
+    selectedUnionScreenRect,
+    enableProgressHighlight,
+    overlappingHighlightIds.length,
+    selectedWordsCount,
+    copyToastText,
+  ]);
 
   // Nearest daf-reference word within a finger's reach of the tap (same row only).
   const resolveCitationTapIndex = (idx: number, x: number, y: number): number => {
@@ -5038,6 +5414,17 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
   return (
     <div className="w-full flex flex-col items-center">
       {hotspots.length > 0 && <DafSearchPanel spots={hotspots} onPick={jumpToSearchHit} onHits={onSearchHits} showButton={false} />}
+      {!isEmbeddedInNoteWindow && !isSiddurPdf && !isChumashPdf && hotspots.length > 0 && (
+        <GazeNavigationOverlay
+          hotspots={hotspots}
+          dibburLinks={dibburLinks}
+          citationHotspotIds={citationHotspotIdsSet}
+          pageContainerRef={pageContainerRef}
+          isDark={isDark}
+          isFullScreen={isFullScreen}
+          onExecuteGazeJump={handleExecuteGazeJump}
+        />
+      )}
       {blinkingTarget?.originMarker && (
         <ReferenceOriginLabel container={pageContainerRef} label={blinkingTarget.labelKa} origin={blinkingTarget.originMarker} />
       )}
@@ -5046,6 +5433,12 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
         <div
           ref={pageContainerRef}
           onClick={() => {
+            if (activeSearchHitIds.size > 0) {
+              setActiveSearchHitIds(new Set());
+            }
+            if (jumpSpotlightSegment) {
+              setJumpSpotlightSegment(null);
+            }
             if (enableRashiFocusMode && focusedRashiSegmentId && onChangeFocusedRashiSegment) {
               onChangeFocusedRashiSegment(null);
             }
@@ -5106,8 +5499,14 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
           />
           <PdfInkHighlight
             baseCanvasRef={canvasRef}
-            spots={hotspots.filter((h) => searchHitIds.has(h.id) || blinkingTarget?.hotspotIds.has(h.id))}
+            spots={hotspots.filter(
+              (h) =>
+                searchHitIds.has(h.id) ||
+                blinkingTarget?.hotspotIds.has(h.id) ||
+                audioSyncActiveSpotIds.has(h.id)
+            )}
             focusedIds={blinkingTarget?.hotspotIds}
+            audioSyncIds={audioSyncActiveSpotIds}
           />
 
           {/* SAVED PROGRESS HIGHLIGHTS LAYER (Only when enabled in Settings) */}
@@ -5146,6 +5545,80 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
             </div>
           )}
 
+          {/* DAF SEARCH BACKGROUND HIGHLIGHTS: subtle tint on all matches + prominent highlighter band on active hit */}
+          {!loadingPdf &&
+            (searchHighlightBoxes.passiveBoxes.length > 0 ||
+              searchHighlightBoxes.activeBoxes.length > 0) && (
+              <div data-pdf-search-highlights="true" className="absolute inset-0 z-14 pointer-events-none">
+                {searchHighlightBoxes.passiveBoxes.map((box, bIdx) => (
+                  <div
+                    key={`search-passive-${box.rowId}-${bIdx}`}
+                    data-search-passive-box="true"
+                    style={{
+                      left: `${box.leftPct}%`,
+                      top: `${box.topPct}%`,
+                      width: `${box.widthPct}%`,
+                      height: `${box.heightPct}%`,
+                      backgroundColor: isDark
+                        ? 'rgba(250, 204, 21, 0.16)'
+                        : 'rgba(250, 204, 21, 0.18)',
+                      mixBlendMode: 'multiply',
+                    }}
+                    className="absolute rounded-[2px]"
+                  />
+                ))}
+                {searchHighlightBoxes.activeBoxes.map((box, bIdx) => (
+                  <div
+                    key={`search-active-${box.rowId}-${bIdx}`}
+                    data-search-active-box="true"
+                    style={{
+                      left: `${box.leftPct}%`,
+                      top: `${box.topPct}%`,
+                      width: `${box.widthPct}%`,
+                      height: `${box.heightPct}%`,
+                      backgroundColor: isDark
+                        ? 'rgba(251, 191, 36, 0.42)'
+                        : 'rgba(251, 191, 36, 0.44)',
+                      border: isDark
+                        ? '1px solid rgba(245, 158, 11, 0.72)'
+                        : '1px solid rgba(217, 119, 6, 0.74)',
+                      boxShadow: '0 0 0 1px rgba(251, 191, 36, 0.18)',
+                      mixBlendMode: 'multiply',
+                    }}
+                    className="absolute rounded-[3px]"
+                  />
+                ))}
+              </div>
+            )}
+
+          {/* AUDIO SYNC HIGHLIGHTER RIBBON (Mishnah & Gemara only): clear marker band behind glowing words */}
+          {!loadingPdf && audioSyncHighlightBoxes.length > 0 && (
+            <div data-pdf-audio-sync-highlights="true" className="absolute inset-0 z-20 pointer-events-none">
+              {audioSyncHighlightBoxes.map((box, bIdx) => (
+                <div
+                  key={`audio-sync-ribbon-${box.rowId}-${bIdx}`}
+                  data-audio-sync-ribbon-box="true"
+                  style={{
+                    left: `${Math.max(0, box.leftPct - 0.35)}%`,
+                    top: `${Math.max(0, box.topPct - 0.16)}%`,
+                    width: `${Math.min(100, box.widthPct + 0.7)}%`,
+                    height: `${box.heightPct + 0.32}%`,
+                    background: isDark
+                      ? 'linear-gradient(180deg, rgba(253, 224, 71, 0.34) 0%, rgba(245, 158, 11, 0.44) 100%)'
+                      : 'linear-gradient(180deg, rgba(254, 240, 138, 0.50) 0%, rgba(251, 191, 36, 0.52) 100%)',
+                    borderBottom: isDark
+                      ? '2.5px solid rgba(251, 191, 36, 0.96)'
+                      : '2.5px solid rgba(217, 119, 6, 0.94)',
+                    boxShadow: isDark
+                      ? '0 0 14px rgba(251, 191, 36, 0.45), inset 0 1px 0 rgba(255, 251, 235, 0.40)'
+                      : '0 0 12px rgba(245, 158, 11, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.55)',
+                  }}
+                  className="talmud-audio-sync-ribbon absolute rounded-[4px]"
+                />
+              ))}
+            </div>
+          )}
+
           {/* GEMARA / MISHNAH BOLD INK WEIGHT OVERLAY */}
           {!loadingPdf && (
             <PdfGemaraBoldOverlay
@@ -5155,33 +5628,45 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
             />
           )}
 
-          {/* RASHI FOCUS MODE: GRAYS OUT / DIMS ALL OTHER AREAS EXCEPT THE FOCUSED RASHI SEGMENT */}
+          {/* COMMENTARY SPOTLIGHT / RASHI FOCUS MODE: BORDERLESS FULL-ENTRY ILLUMINATION UP TO ":" */}
           {!loadingPdf &&
-            enableRashiFocusMode &&
-            focusedRashiSegment &&
-            focusedRashiSegment.lineBoxes.length > 0 && (
-              <>
-                <svg width="0" height="0" className="absolute pointer-events-none" aria-hidden="true">
-                  <defs>
-                    <mask id={rashiFocusMaskId} maskContentUnits="objectBoundingBox">
-                      <rect x="0" y="0" width="1" height="1" fill="white" />
-                      {focusedRashiSegment.lineBoxes.map((box, bIdx) => (
-                        <rect
-                          key={`${box.rowId}-${bIdx}`}
-                          x={Math.max(0, (box.leftPct - 0.35) / 100)}
-                          y={Math.max(0, (box.topPct - 0.25) / 100)}
-                          width={Math.min(1, (box.widthPct + 0.7) / 100)}
-                          height={Math.min(1, (box.heightPct + 0.5) / 100)}
-                          rx="0.004"
-                          fill="black"
-                        />
-                      ))}
-                    </mask>
-                  </defs>
-                </svg>
-                <div
+            activeSpotlightSegment &&
+            activeSpotlightSegment.lineBoxes.length > 0 && (
+              <svg width="0" height="0" className="absolute pointer-events-none" aria-hidden="true">
+                <defs>
+                  <mask id={rashiFocusMaskId} maskContentUnits="objectBoundingBox">
+                    <rect x="0" y="0" width="1" height="1" fill="white" />
+                    {activeSpotlightSegment.lineBoxes.map((box, bIdx) => (
+                      <rect
+                        key={`${box.rowId}-${bIdx}`}
+                        x={Math.max(0, box.leftPct / 100)}
+                        y={Math.max(0, box.topPct / 100)}
+                        width={Math.min(1, box.widthPct / 100)}
+                        height={Math.min(1, box.heightPct / 100)}
+                        rx="0.002"
+                        fill="black"
+                      />
+                    ))}
+                  </mask>
+                </defs>
+              </svg>
+            )}
+          <AnimatePresence>
+            {!loadingPdf &&
+              activeSpotlightSegment &&
+              activeSpotlightSegment.lineBoxes.length > 0 && (
+                <motion.div
+                  key="rashi-focus-backdrop"
                   data-rashi-focus-backdrop="true"
                   aria-hidden="true"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={
+                    prefersReducedMotion
+                      ? { duration: 0.01 }
+                      : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }
+                  }
                   style={{
                     mask: `url(#${rashiFocusMaskId})`,
                     WebkitMask: `url(#${rashiFocusMaskId})`,
@@ -5189,25 +5674,56 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
                     backdropFilter: 'grayscale(0.92) contrast(0.85)',
                     WebkitBackdropFilter: 'grayscale(0.92) contrast(0.85)',
                   }}
-                  className="absolute inset-0 z-32 pointer-events-none transition-opacity duration-200"
+                  className="absolute inset-0 z-32 pointer-events-none"
                 />
-                <div className="absolute inset-0 z-33 pointer-events-none" aria-hidden="true">
-                  {focusedRashiSegment.lineBoxes.map((box, bIdx) => (
-                    <div
+              )}
+          </AnimatePresence>
+          <AnimatePresence mode="wait">
+            {!loadingPdf &&
+              activeSpotlightSegment &&
+              activeSpotlightSegment.lineBoxes.length > 0 && (
+                <motion.div
+                  key={`rashi-focus-highlights-${activeSpotlightSegment.segmentId}`}
+                  data-rashi-focus-active-segment={activeSpotlightSegment.segmentId}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={
+                    prefersReducedMotion
+                      ? { duration: 0.01 }
+                      : { duration: 0.22, ease: [0.22, 1, 0.36, 1] }
+                  }
+                  className="absolute inset-0 z-33 pointer-events-none"
+                  aria-hidden="true"
+                >
+                  {activeSpotlightSegment.lineBoxes.map((box, bIdx) => (
+                    <motion.div
                       key={`rashi-focus-outline-${box.rowId}-${bIdx}`}
+                      data-rashi-focus-highlight-box="true"
+                      initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.98 }}
+                      animate={prefersReducedMotion ? { opacity: 1 } : { opacity: 1, scale: 1 }}
+                      exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.985 }}
+                      transition={
+                        prefersReducedMotion
+                          ? { duration: 0.01 }
+                          : {
+                              duration: 0.32,
+                              delay: Math.min(bIdx * 0.025, 0.12),
+                              ease: [0.22, 1, 0.36, 1],
+                            }
+                      }
                       style={{
-                        left: `${Math.max(0, box.leftPct - 0.25)}%`,
-                        top: `${Math.max(0, box.topPct - 0.15)}%`,
-                        width: `${Math.min(100, box.widthPct + 0.5)}%`,
-                        height: `${Math.min(100, box.heightPct + 0.3)}%`,
-                        boxShadow: 'inset 0 0 0 1px rgba(217, 119, 6, 0.26)',
+                        left: `${Math.max(0, box.leftPct)}%`,
+                        top: `${Math.max(0, box.topPct)}%`,
+                        width: `${Math.min(100, box.widthPct)}%`,
+                        height: `${Math.min(100, box.heightPct)}%`,
                       }}
-                      className="absolute rounded-[2px]"
+                      className="absolute rounded-[3px] rashi-focus-active-box"
                     />
                   ))}
-                </div>
-              </>
-            )}
+                </motion.div>
+              )}
+          </AnimatePresence>
 
           {/* Independent Rashi / Tosafot reading lines — same sheer band style as the Gemara line */}
           {!loadingPdf &&
@@ -5644,6 +6160,7 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
             {hotspots.map((h, idx) => {
               const isSelected = selectedHotspotIdsSet.has(h.id);
               const isBlinkingWord = blinkingTarget?.hotspotIds.has(h.id) || false;
+              const isAudioSyncedWord = audioSyncActiveSpotIds.has(h.id);
               const isMarkerOrCitation = h.isSmallMarker || citationHotspotIdsSet.has(h.id);
 
               // Royal Blue ink tinting is applied strictly on the letter glyphs on the canvas.
@@ -5661,6 +6178,7 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
                   tabIndex={-1}
                   data-daf-word="true"
                   data-reference-highlight={isBlinkingWord ? 'true' : undefined}
+                  data-audio-sync-highlight={isAudioSyncedWord ? 'true' : undefined}
                   data-small-marker={h.isSmallMarker ? 'true' : undefined}
                   data-section={h.section}
                   data-row-id={h.rowId}
@@ -5716,6 +6234,7 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
                       lastMarkerTouchRef.current = Date.now();
                       setSelectedRange(null);
                       setShowRangeHandles(false);
+                      setJumpSpotlightSegment(null);
                       if (!openBiblicalCitation(idx)) triggerJumpAndBlinkForMarker(h);
                     } else clearLongPressTimer();
                   }}
@@ -5729,13 +6248,18 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
                     const tapSpot = hotspots[tapIdx] || h;
                     const isNavTap = citationHotspotIdsSet.has(tapSpot.id) || tapSpot.isSmallMarker;
                     const isQuickHl = enableProgressHighlight && quickHighlightMode && !h.isSmallMarker;
+                    const isActiveSpotlightSpot = Boolean(activeSpotlightSegment?.spotIds.has(h.id));
+                    const commentarySection =
+                      h.section === 'rashi' || h.section === 'tosafot' ? h.section : null;
                     const shouldFocusRashiFirst =
                       enableRashiFocusMode &&
                       !isNavTap &&
                       !showRangeHandles &&
                       !isQuickHl &&
-                      h.section === 'rashi' &&
-                      focusedRashiSegmentId !== findRashiSegmentForHotspot(h.id, hotspots)?.segmentId;
+                      !isActiveSpotlightSpot &&
+                      commentarySection !== null &&
+                      focusedRashiSegmentId !==
+                        findCommentarySegmentForHotspot(h.id, hotspots, commentarySection)?.segmentId;
                     if (
                       !isNavTap &&
                       !isQuickHl &&
@@ -5745,6 +6269,17 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
                     ) {
                       markReadingLineAt(h);
                     }
+                    if (
+                      !isNavTap &&
+                      !isQuickHl &&
+                      !shouldFocusRashiFirst &&
+                      !showRangeHandles &&
+                      !suppressNextClickRef.current &&
+                      document.body.dataset.talmudPanning !== 'true' &&
+                      onAudioSyncHotspotClick?.(tapSpot)
+                    ) {
+                      return;
+                    }
                     if (!isNavTap && !isQuickHl && !shouldFocusRashiFirst && !showRangeHandles && jumpToDibbur(h, e.clientX, (e.currentTarget as HTMLElement).getBoundingClientRect())) return;
                     handleWordClick(e, tapIdx);
                   }}
@@ -5753,13 +6288,18 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
                     top: `${h.topPct}%`,
                     width: `${h.widthPct}%`,
                     height: `${h.heightPct}%`,
-                    zIndex: isBlinkingWord ? 55 : isMarkerOrCitation ? 55 : isSelected ? 48 : 22,
+                    zIndex: isBlinkingWord || isAudioSyncedWord ? 55 : isMarkerOrCitation ? 55 : isSelected ? 48 : 22,
                     pointerEvents: 'auto',
                     backgroundColor: bgStyle,
                     mixBlendMode: 'normal',
                     outline: 'none',
                   }}
-                  data-dibbur-link={dibburLinks.roles.has(h.id) ? 'true' : undefined}
+                  data-dibbur-link={
+                    (() => {
+                      const spotRole = dibburLinks.roles.get(h.id);
+                      return spotRole?.rashi || spotRole?.tosafot ? 'true' : undefined;
+                    })()
+                  }
                   className={`absolute p-0 m-0 rounded-none cursor-pointer transition-colors duration-150 pointer-events-auto select-none ${
                     isMarkerOrCitation ? 'talmud-blue-marker' : ''
                   }`}
@@ -5768,114 +6308,219 @@ export const VilnaPdfInteractiveViewer: React.FC<VilnaPdfInteractiveViewerProps>
             })}
           </div>
 
-          {/* Floating Action Bar (Copy, Explain & Progress Highlight) for Selected Range */}
+          {/* Smart 3D Crystal Capsule (Selection Preview, Copy, Explain & Highlight) */}
           {typeof document !== 'undefined' &&
-            selectedUnionScreenRect &&
-            selectedRange &&
-            showRangeHandles &&
-            !isDraggingSelection &&
-            !isSingleSmallMarkerSelected &&
             createPortal(
-              <div
-                style={{
-                  position: 'fixed',
-                  left: `${Math.max(12, Math.min(window.innerWidth - (enableProgressHighlight ? 340 : 272), selectedUnionScreenRect.left + selectedUnionScreenRect.width / 2 - (enableProgressHighlight ? 164 : 130)))}px`,
-                  top: `${selectedUnionScreenRect.bottom + 84 < window.innerHeight ? selectedUnionScreenRect.bottom + 40 : Math.max(8, selectedUnionScreenRect.top - 46)}px`,
-                  zIndex: 9999,
-                  maxWidth: 'calc(100vw - 24px)',
-                }}
-                className="pointer-events-auto flex flex-wrap items-center gap-1 px-2 py-1 rounded-xl bg-stone-900/95 dark:bg-[#1C120C]/95 text-stone-100 border border-amber-500/50 shadow-2xl backdrop-blur-md select-none"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <button
-                  type="button"
-                  onClick={handleCopySelectedText}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/35 text-amber-300 font-bold text-xs transition-colors cursor-pointer active:scale-95"
-                  title="მონიშნული ტექსტის კოპირება"
-                >
-                  <Copy className="w-3.5 h-3.5 shrink-0" />
-                  <span>კოპირება</span>
-                </button>
-                <div className="w-[1px] h-4 bg-white/20" />
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowRangeHandles(false);
-                    commitSelectionRange(selectedRange.startIdx, selectedRange.endIdx, true);
-                  }}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/35 text-sky-300 font-bold text-xs transition-colors cursor-pointer active:scale-95"
-                  title="მონიშნული ტექსტის ახსნა"
-                >
-                  <BookOpen className="w-3.5 h-3.5 shrink-0" />
-                  <span>განმარტება</span>
-                </button>
-                {enableProgressHighlight && onSaveHighlightRange && (
-                  <>
-                    <div className="w-[1px] h-4 bg-white/20" />
-                    <div className="flex items-center gap-1">
-                      {(
-                        [
-                          { id: 'amber', cls: 'bg-amber-400', label: 'ყვითელი მონიშვნა' },
-                          { id: 'emerald', cls: 'bg-emerald-400', label: 'მწვანე მონიშვნა' },
-                          { id: 'sky', cls: 'bg-sky-400', label: 'ცისფერი მონიშვნა' },
-                        ] as const
-                      ).map((c) => (
-                        <button
-                          key={c.id}
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            saveRangeAsHighlight(selectedRange.startIdx, selectedRange.endIdx, c.id);
-                            setShowRangeHandles(false);
-                            setSelectedRange(null);
-                            if (typeof document !== 'undefined') delete document.body.dataset.talmudWordSelecting;
-                          }}
-                          aria-label={c.label}
-                          title={c.label}
-                          className="w-6 h-6 rounded-lg bg-white/8 hover:bg-white/20 flex items-center justify-center cursor-pointer active:scale-95"
-                        >
-                          <span className={`w-3 h-3 rounded-full ${c.cls} ring-1 ring-white/50`} />
-                        </button>
-                      ))}
-                      {overlappingHighlightIds.length > 0 && onRemoveHighlightId && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            overlappingHighlightIds.forEach((id) => onRemoveHighlightId(id));
-                            setShowRangeHandles(false);
-                            setSelectedRange(null);
-                            if (typeof document !== 'undefined') delete document.body.dataset.talmudWordSelecting;
-                          }}
-                          aria-label="მონიშვნის წაშლა"
-                          title="ამ ფრაგმენტის მონიშვნის წაშლა"
-                          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-500/25 hover:bg-rose-500/40 text-rose-200 font-bold text-xs cursor-pointer active:scale-95"
-                        >
-                          <Trash2 className="w-3 h-3 shrink-0" />
-                          <span>მოხსნა</span>
-                        </button>
-                      )}
+              <AnimatePresence>
+                {shouldRenderSelectionPopover && selectedUnionScreenRect && selectedRange && (
+                  <motion.div
+                    key="crystal-selection-capsule"
+                    ref={selectionPopoverRef}
+                    data-selection-capsule="true"
+                    initial={
+                      prefersReducedMotion
+                        ? { opacity: 0 }
+                        : {
+                            opacity: 0,
+                            scale: 0.94,
+                            y: selectionPopoverPos?.placement === 'above' ? 8 : -8,
+                          }
+                    }
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={
+                      prefersReducedMotion
+                        ? { opacity: 0 }
+                        : {
+                            opacity: 0,
+                            scale: 0.95,
+                            y: selectionPopoverPos?.placement === 'above' ? 6 : -6,
+                          }
+                    }
+                    transition={
+                      prefersReducedMotion
+                        ? { duration: 0.01 }
+                        : { duration: 0.2, ease: [0.22, 1, 0.36, 1] }
+                    }
+                    style={{
+                      position: 'fixed',
+                      left: `${
+                        selectionPopoverPos?.left ??
+                        Math.max(
+                          12,
+                          Math.min(
+                            window.innerWidth - (enableProgressHighlight ? 348 : 304),
+                            selectedUnionScreenRect.left +
+                              selectedUnionScreenRect.width / 2 -
+                              (enableProgressHighlight ? 168 : 146)
+                          )
+                        )
+                      }px`,
+                      top: `${
+                        selectionPopoverPos?.top ??
+                        (selectedUnionScreenRect.bottom + 120 < window.innerHeight
+                          ? selectedUnionScreenRect.bottom + 36
+                          : Math.max(58, selectedUnionScreenRect.top - 96))
+                      }px`,
+                      zIndex: 9999,
+                      maxWidth: 'calc(100vw - 24px)',
+                    }}
+                    className="pointer-events-auto crystal-selection-capsule px-2.5 pt-2 pb-2 select-none"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {/* Directional crystal caret pointing toward selection */}
+                    <span
+                      aria-hidden="true"
+                      data-placement={selectionPopoverPos?.placement ?? 'below'}
+                      style={{
+                        left: `${selectionPopoverPos?.arrowLeft ?? 44}px`,
+                        ...(selectionPopoverPos?.placement === 'above'
+                          ? { bottom: '-6px' }
+                          : { top: '-6px' }),
+                      }}
+                      className="crystal-selection-caret"
+                    />
+
+                    {/* Selected Hebrew words preview + clean metadata */}
+                    <div className="px-1.5 pb-1.5 flex items-center justify-between gap-2.5 min-w-0">
+                      <div className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap" dir="rtl">
+                        <span className="crystal-selection-meta-he text-[13.5px] font-bold text-amber-800 dark:text-amber-200">
+                          {selectedPreviewTextHe || 'მონიშნული ფრაგმენტი'}
+                        </span>
+                      </div>
+                      <span className="shrink-0 text-[11px] font-bold opacity-75 tabular-nums whitespace-nowrap">
+                        {selectedWordsCount} სიტყვა
+                        {selectedSectionLabelKa ? ` · ${selectedSectionLabelKa}` : ''}
+                      </span>
                     </div>
-                  </>
+
+                    {/* Single-row controls: recessed 3D crystal trough + carved right close socket */}
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <div className="crystal-selection-trough flex-1 min-w-0 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                        <button
+                          type="button"
+                          onClick={handleCopySelectedText}
+                          className="crystal-selection-action-pill cursor-pointer"
+                          title="მონიშნული ტექსტის კოპირება"
+                        >
+                          <span
+                            className="crystal-selection-orb-badge"
+                            data-tone={copyToastText ? 'emerald' : 'amber'}
+                          >
+                            {copyToastText ? (
+                              <Check className="w-3.5 h-3.5 shrink-0" />
+                            ) : (
+                              <Copy className="w-3.5 h-3.5 shrink-0" />
+                            )}
+                          </span>
+                          <span>{copyToastText ? 'დაკოპირდა' : 'კოპირება'}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setShowRangeHandles(false);
+                            commitSelectionRange(selectedRange.startIdx, selectedRange.endIdx, true);
+                          }}
+                          className="crystal-selection-action-pill cursor-pointer"
+                          title="მონიშნული ტექსტის ახსნა"
+                        >
+                          <span className="crystal-selection-orb-badge" data-tone="sky">
+                            <BookOpen className="w-3.5 h-3.5 shrink-0" />
+                          </span>
+                          <span>განმარტება</span>
+                        </button>
+
+                        {enableProgressHighlight && onSaveHighlightRange && (
+                          <>
+                            <span
+                              aria-hidden="true"
+                              className="w-[1px] h-4 bg-slate-900/15 dark:bg-sky-200/20 shrink-0"
+                            />
+                            <div className="flex items-center gap-1 shrink-0">
+                              {(
+                                [
+                                  {
+                                    id: 'amber',
+                                    bg: 'radial-gradient(circle at 35% 30%, #fef08a 0%, #f59e0b 65%, #b45309 100%)',
+                                    label: 'ყვითელი მონიშვნა',
+                                  },
+                                  {
+                                    id: 'emerald',
+                                    bg: 'radial-gradient(circle at 35% 30%, #a7f3d0 0%, #10b981 65%, #047857 100%)',
+                                    label: 'მწვანე მონიშვნა',
+                                  },
+                                  {
+                                    id: 'sky',
+                                    bg: 'radial-gradient(circle at 35% 30%, #bae6fd 0%, #38bdf8 65%, #0369a1 100%)',
+                                    label: 'ცისფერი მონიშვნა',
+                                  },
+                                ] as const
+                              ).map((c) => (
+                                <button
+                                  key={c.id}
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    saveRangeAsHighlight(selectedRange.startIdx, selectedRange.endIdx, c.id);
+                                    setShowRangeHandles(false);
+                                    setSelectedRange(null);
+                                    if (typeof document !== 'undefined')
+                                      delete document.body.dataset.talmudWordSelecting;
+                                  }}
+                                  aria-label={c.label}
+                                  title={c.label}
+                                  style={{ background: c.bg }}
+                                  className="crystal-selection-color-orb cursor-pointer"
+                                />
+                              ))}
+                              {overlappingHighlightIds.length > 0 && onRemoveHighlightId && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    overlappingHighlightIds.forEach((id) => onRemoveHighlightId(id));
+                                    setShowRangeHandles(false);
+                                    setSelectedRange(null);
+                                    if (typeof document !== 'undefined')
+                                      delete document.body.dataset.talmudWordSelecting;
+                                  }}
+                                  aria-label="მონიშვნის წაშლა"
+                                  title="ამ ფრაგმენტის მონიშვნის წაშლა"
+                                  className="inline-flex items-center gap-1 h-7 px-2 rounded-full bg-rose-500/85 hover:bg-rose-500 text-white font-bold text-[11px] whitespace-nowrap shrink-0 shadow-sm cursor-pointer active:scale-95"
+                                >
+                                  <Trash2 className="w-3 h-3 shrink-0" />
+                                  <span>მოხსნა</span>
+                                </button>
+                              )}
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      {/* Carved circular socket holding close orb — never wraps to a 2nd line */}
+                      <div className="crystal-selection-close-socket">
+                        <button
+                          type="button"
+                          aria-label="მონიშვნის გაუქმება"
+                          title="მონიშვნის გაუქმება"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setShowRangeHandles(false);
+                            setSelectedRange(null);
+                            lastWordTapRef.current = null;
+                            if (typeof document !== 'undefined')
+                              delete document.body.dataset.talmudWordSelecting;
+                          }}
+                          className="crystal-selection-close-btn cursor-pointer"
+                        >
+                          <X className="w-3.5 h-3.5 stroke-[2.4]" />
+                        </button>
+                      </div>
+                    </div>
+                  </motion.div>
                 )}
-                <div className="w-[1px] h-4 bg-white/20" />
-                <button
-                  type="button"
-                  aria-label="მონიშვნის გაუქმება"
-                  title="მონიშვნის გაუქმება"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowRangeHandles(false);
-                    setSelectedRange(null);
-                    lastWordTapRef.current = null;
-                    if (typeof document !== 'undefined') delete document.body.dataset.talmudWordSelecting;
-                  }}
-                  className="flex items-center justify-center w-7 h-7 rounded-lg text-stone-300 hover:bg-white/10 transition-colors cursor-pointer active:scale-95"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>,
+              </AnimatePresence>,
               document.body
             )}
 

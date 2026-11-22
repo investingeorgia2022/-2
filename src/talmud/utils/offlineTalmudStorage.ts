@@ -426,10 +426,12 @@ export async function downloadAndCacheDafOffline(
   options?: {
     translateGeorgian?: boolean;
     source?: 'pack-download' | 'manual';
+    signal?: AbortSignal;
   }
 ): Promise<DafPageData> {
   const translateGeorgian = options?.translateGeorgian ?? true;
   const sourceType = options?.source ?? 'pack-download';
+  const signal = options?.signal;
 
   const baseData = getCuratedOrDynamicDaf(
     tractate.id,
@@ -452,14 +454,14 @@ export async function downloadAndCacheDafOffline(
       if (cachedResp) {
         response = cachedResp;
       } else {
-        const netResp = await fetch(url);
+        const netResp = await fetch(url, signal ? { signal } : undefined);
         if (netResp.ok) {
           await cache.put(url, netResp.clone());
           response = netResp;
         }
       }
     } else {
-      const netResp = await fetch(url);
+      const netResp = await fetch(url, signal ? { signal } : undefined);
       if (netResp.ok) {
         response = netResp;
       }
@@ -721,7 +723,13 @@ export async function downloadAndCacheDafOffline(
 
     await saveDafToOfflineStorage(fullDaf, sourceType);
     return fullDaf;
-  } catch {
+  } catch (err) {
+    if (
+      signal?.aborted ||
+      (err instanceof Error && err.name === 'AbortError')
+    ) {
+      throw err;
+    }
     const fallbackDaf: DafPageData = {
       ...baseData,
       allCommentaries:
@@ -770,6 +778,7 @@ export async function downloadTractateOfflinePack(params: {
       await downloadAndCacheDafOffline(tractate, dafId, {
         translateGeorgian,
         source: 'pack-download',
+        signal,
       });
     }
     downloadedCount++;

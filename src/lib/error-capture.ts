@@ -46,19 +46,70 @@ function safeStringify(value: unknown): string {
 }
 
 function isErrorLike(value: unknown): value is Error {
-  return value instanceof Error;
+  return (
+    value instanceof Error || (typeof DOMException !== "undefined" && value instanceof DOMException)
+  );
+}
+
+export function isAbortError(error: unknown, seen = new Set<object>()): boolean {
+  if (!error || typeof error !== "object") return false;
+  if (seen.has(error) || seen.size > 8) return false;
+  seen.add(error);
+
+  const err = error as { name?: unknown; code?: unknown; message?: unknown; cause?: unknown };
+  if (
+    err.name === "AbortError" ||
+    err.name === "AbortException" ||
+    err.code === "ERR_STREAM_PREMATURE_CLOSE" ||
+    err.code === "ERR_STREAM_ABORT" ||
+    err.code === "ABORT_ERR" ||
+    err.code === "ECONNRESET" ||
+    err.code === "ECANCELED"
+  ) {
+    return true;
+  }
+  if (
+    typeof err.message === "string" &&
+    (/^(?:aborted|this operation was aborted|the operation was aborted\.?|request aborted|signal is aborted(?: without reason)?)$/i.test(
+      err.message.trim(),
+    ) ||
+      /operation was aborted|request was aborted|connection closed prematurely/i.test(err.message))
+  ) {
+    return true;
+  }
+  if (err.cause !== undefined) {
+    return isAbortError(err.cause, seen);
+  }
+  return false;
 }
 
 // Wrap console.error so errors logged by any layer — including h3's internal
 // unhandled-error logging, which this file cannot hook directly — are both
 // recorded for consumeLastCapturedError and expanded before serialization.
+// Abort errors (such as client disconnects wrapped in h3 HTTPError) are recorded
+// for 499 conversion in server.ts without noisy console.error output.
 const originalConsoleError = console.error.bind(console);
 console.error = (...args: unknown[]) => {
+  let hasAbortOrError = false;
+  let hasNonAbortError = false;
   const expanded = args.map((arg) => {
-    if (!isErrorLike(arg)) return arg;
-    record(arg);
-    return describeError(arg);
+    if (isErrorLike(arg)) {
+      hasAbortOrError = true;
+      record(arg);
+      if (!isAbortError(arg)) {
+        hasNonAbortError = true;
+      }
+      return describeError(arg);
+    }
+    if (isAbortError(arg)) {
+      hasAbortOrError = true;
+      record(arg);
+    }
+    return arg;
   });
+  if (hasAbortOrError && !hasNonAbortError) {
+    return;
+  }
   originalConsoleError(...expanded);
 };
 

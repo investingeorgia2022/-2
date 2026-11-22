@@ -39,7 +39,6 @@ import {
   Users,
   HeartHandshake,
   Flame,
-  Menu,
   Undo2,
   Scale,
   Plus,
@@ -61,6 +60,9 @@ import {
   SunMedium,
   CalendarCheck,
   Archive,
+  Copy,
+  Check,
+  Headphones,
 } from 'lucide-react';
 import {
   AnalysisMode,
@@ -106,8 +108,9 @@ import { ExportProjectModal } from './components/ExportProjectModal';
 import { CascadingTalmudMishnahSelectorModal } from './components/CascadingTalmudMishnahSelectorModal';
 import { MishnahMapModal, MishnahGuideModal, useMishnahChapter } from './components/MishnahGuide';
 import { OfflineLibraryPanel } from './components/OfflineLibraryPanel';
-import { SACRED_REALMS, SacredRealmId } from './data/tanakhAndHalakhaData';
+import { SACRED_REALMS, SacredRealmId, TUR_BOOKS, numberToHebrewGematria } from './data/tanakhAndHalakhaData';
 import { ClassicSacredDafView } from './components/ClassicSacredDafView';
+import { TurDafInterface } from './components/TurDafInterface';
 import { DailyBlessingsView } from './components/DailyBlessingsView';
 import { SiddurInteractiveView } from './components/SiddurInteractiveView';
 import { DailyTwoHalakhotView } from './components/DailyTwoHalakhotView';
@@ -117,6 +120,12 @@ import {
 } from './components/FloatingSourceDafNoteWindow';
 import { GalacticGlobeAndAiGreeter } from './components/GalacticGlobeAndAiGreeter';
 import { SpinningCrystalCrownMagenDavidEmblem, AnimatedMiniGlobeIcon, AnimatedGlobeIconWrapper, AxialRotatingSphereCanvas } from './components/CrystalGlobeHelpers';
+import { PopularTractatesD3Chart } from './components/PopularTractatesD3Chart';
+import {
+  getTopSearchedTractates30Days,
+  recordTractateSearch,
+  type TopTractateStat,
+} from './utils/tractateSearchStats';
 import { CrystalMouseJoystick } from './components/CrystalMouseJoystick';
 import { DafCompletionConfetti, emitDafCompletedCelebration } from './components/DafCompletionConfetti';
 import { HebrewHalakhicCalendarView } from './components/HebrewHalakhicCalendarView';
@@ -144,6 +153,67 @@ import {
   translateWithTorahTalmudSpecServer,
   transliterateHebrewToGeorgian,
 } from './utils/georgianTranslator';
+
+export interface FloatingViewportClampInput {
+  anchorRect: {
+    top: number;
+    left: number;
+    bottom: number;
+    right: number;
+    width: number;
+    height: number;
+  };
+  windowWidth: number;
+  windowHeight: number;
+  viewportW: number;
+  viewportH: number;
+  topSafePx?: number;
+  bottomSafePx?: number;
+  paddingX?: number;
+  gap?: number;
+}
+
+export interface FloatingViewportClampResult {
+  left: number;
+  top: number;
+  placement: 'above' | 'below';
+  arrowLeft: number;
+}
+
+function clampFloatingWindowToViewport({
+  anchorRect,
+  windowWidth,
+  windowHeight,
+  viewportW,
+  viewportH,
+  topSafePx = 66,
+  bottomSafePx = 92,
+  paddingX = 12,
+  gap = 12,
+}: FloatingViewportClampInput): FloatingViewportClampResult {
+  const safeW = Math.min(windowWidth, Math.max(180, viewportW - paddingX * 2));
+  const anchorCenterX = anchorRect.left + anchorRect.width / 2;
+  const left = Math.max(
+    paddingX,
+    Math.min(viewportW - safeW - paddingX, Math.round(anchorCenterX - safeW / 2))
+  );
+  const arrowLeft = Math.max(20, Math.min(safeW - 20, Math.round(anchorCenterX - left)));
+
+  const spaceBelow = viewportH - bottomSafePx - anchorRect.bottom - gap;
+  const spaceAbove = anchorRect.top - topSafePx - gap;
+  const placement: 'above' | 'below' =
+    spaceBelow >= windowHeight || spaceBelow >= spaceAbove ? 'below' : 'above';
+
+  const rawTop =
+    placement === 'below'
+      ? Math.round(anchorRect.bottom + gap)
+      : Math.round(anchorRect.top - windowHeight - gap);
+
+  const maxTop = Math.max(topSafePx, viewportH - bottomSafePx - windowHeight);
+  const top = Math.max(topSafePx, Math.min(maxTop, rawTop));
+
+  return { left, top, placement, arrowLeft };
+}
 
 const UI_STRINGS: Record<
   UILang,
@@ -548,6 +618,39 @@ const cascadingMenuItemVariants: Variants = {
   },
 };
 
+const searchResultsCascadeVariants: Variants = {
+  hidden: {
+    opacity: 0,
+    transition: {
+      duration: 0.14,
+      ease: 'easeOut',
+    },
+  },
+  visible: {
+    opacity: 1,
+    transition: {
+      duration: 0.18,
+      when: 'beforeChildren',
+      staggerChildren: 0.032,
+    },
+  },
+};
+
+const searchResultItemVariants: Variants = {
+  hidden: {
+    opacity: 0,
+    y: 8,
+  },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: {
+      duration: 0.22,
+      ease: [0.16, 1, 0.3, 1] as const,
+    },
+  },
+};
+
 export function App() {
   const [theme, setTheme] = useState<AppTheme>(() => {
     const saved = readPreference('talmud_theme_3d');
@@ -570,23 +673,107 @@ export function App() {
   const [showReturnToDafPearl, setShowReturnToDafPearl] = useState<boolean>(false);
   const [pearlDirection, setPearlDirection] = useState<'up' | 'down'>('up');
 
+  const LAST_DAF_SESSION_KEY = 'talmud_last_daf_state_v1';
+  const initialSessionInfo = useMemo(() => {
+    let hasUrlTractate = false;
+    let hasUrlDaf = false;
+    let tractateId = 'Taanit';
+    let dafId = '2a';
+    let savedScroll: { scrollY: number; folioScrollTop: number; folioRatio: number } | null = null;
+
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const p = params.get('tractate');
+      const d = params.get('daf');
+      if (p && TRACTATES.some((tr) => tr.id === p)) {
+        tractateId = p;
+        hasUrlTractate = true;
+      }
+      if (d && /^\d+[ab]$/.test(d)) {
+        dafId = d;
+        hasUrlDaf = true;
+      }
+
+      if (!hasUrlTractate && !hasUrlDaf) {
+        try {
+          const rawLast = localStorage.getItem(LAST_DAF_SESSION_KEY);
+          if (rawLast) {
+            const parsed = JSON.parse(rawLast);
+            if (
+              parsed &&
+              typeof parsed.tractateId === 'string' &&
+              TRACTATES.some((tr) => tr.id === parsed.tractateId) &&
+              typeof parsed.dafId === 'string' &&
+              /^\d+[ab]$/.test(parsed.dafId)
+            ) {
+              tractateId = parsed.tractateId;
+              dafId = parsed.dafId;
+              const sY = Math.max(0, Number(parsed.scrollY) || 0);
+              const fTop = Math.max(0, Number(parsed.folioScrollTop) || 0);
+              const fRatio = Math.max(0, Math.min(1, Number(parsed.folioRatio) || 0));
+              if (sY > 10 || fTop > 10 || fRatio > 0.01) {
+                savedScroll = { scrollY: sY, folioScrollTop: fTop, folioRatio: fRatio };
+              }
+            }
+          } else {
+            const rawRecent = localStorage.getItem('talmud_recently_viewed_v1');
+            const recentList = rawRecent ? JSON.parse(rawRecent) : [];
+            const firstRecent = Array.isArray(recentList) ? recentList[0] : null;
+            if (
+              firstRecent &&
+              TRACTATES.some((tr) => tr.id === firstRecent.tractateId) &&
+              /^\d+[ab]$/.test(String(firstRecent.dafId || ''))
+            ) {
+              tractateId = firstRecent.tractateId;
+              dafId = firstRecent.dafId;
+            }
+          }
+        } catch {
+          // ignore storage errors
+        }
+      }
+    }
+    const trObj = TRACTATES.find((tr) => tr.id === tractateId) || TRACTATES[0];
+    return { tractateId: trObj.id, trObj, dafId, savedScroll };
+  }, []);
+
   const [selectedSederId, setSelectedSederId] = useState<string>('all');
-  const [selectedTractateId, setSelectedTractateId] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      const p = new URLSearchParams(window.location.search).get('tractate');
-      if (p && TRACTATES.some((tr) => tr.id === p)) return p;
-    }
-    return 'Taanit';
-  });
-  const [selectedDafId, setSelectedDafId] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      const d = new URLSearchParams(window.location.search).get('daf');
-      if (d && /^\d+[ab]$/.test(d)) return d;
-    }
-    return '2a';
-  });
+  const [selectedTractateId, setSelectedTractateId] = useState<string>(initialSessionInfo.tractateId);
+  const [selectedDafId, setSelectedDafId] = useState<string>(initialSessionInfo.dafId);
   const [pageTurnDirection, setPageTurnDirection] = useState<1 | -1>(1);
   const [restoreScrollTrigger, setRestoreScrollTrigger] = useState<number>(0);
+  const pendingSessionScrollRef = useRef<{
+    tractateId: string;
+    dafId: string;
+    scrollY: number;
+    folioScrollTop: number;
+    folioRatio: number;
+  } | null>(
+    initialSessionInfo.savedScroll
+      ? {
+          tractateId: initialSessionInfo.tractateId,
+          dafId: initialSessionInfo.dafId,
+          ...initialSessionInfo.savedScroll,
+        }
+      : null
+  );
+  const latestDafScrollRef = useRef<{
+    tractateId: string;
+    dafId: string;
+    scrollY: number;
+    folioScrollTop: number;
+    folioRatio: number;
+  }>({
+    tractateId: initialSessionInfo.tractateId,
+    dafId: initialSessionInfo.dafId,
+    scrollY: initialSessionInfo.savedScroll?.scrollY || 0,
+    folioScrollTop: initialSessionInfo.savedScroll?.folioScrollTop || 0,
+    folioRatio: initialSessionInfo.savedScroll?.folioRatio || 0,
+  });
+  const prevDafSessionKeyRef = useRef<string>(`${initialSessionInfo.tractateId}:${initialSessionInfo.dafId}`);
+  const sessionDafScrollMapRef = useRef<
+    Map<string, { tractateId: string; dafId: string; scrollY: number; folioScrollTop: number; folioRatio: number }>
+  >(new Map());
 
   // Recently Viewed Talmud Pages persisted in localStorage
   const [recentlyViewedDapim, setRecentlyViewedDapim] = useState<RecentlyViewedDaf[]>(() => {
@@ -617,7 +804,12 @@ export function App() {
   }, [recentlyViewedDapim, recentSortOrder]);
 
   const [dafData, setDafData] = useState<DafPageData>(() =>
-    getCuratedOrDynamicDaf('Taanit', '2a', 'תענית', 'თაანით')
+    getCuratedOrDynamicDaf(
+      initialSessionInfo.trObj.id,
+      initialSessionInfo.dafId,
+      initialSessionInfo.trObj.nameHe,
+      initialSessionInfo.trObj.nameKa
+    )
   );
   const [loadingDaf, setLoadingDaf] = useState<boolean>(false);
 
@@ -651,6 +843,33 @@ export function App() {
 
   const [highlightedSentenceId, setHighlightedSentenceId] = useState<string | null>(null);
   const [wordExplainStage, setWordExplainStage] = useState<'none' | 'marked' | 'note' | 'deep'>('none');
+  const [copiedFloatingSelection, setCopiedFloatingSelection] = useState<boolean>(false);
+  const [hasPdfSelectionCapsule, setHasPdfSelectionCapsule] = useState<boolean>(false);
+  const [floatingViewportSize, setFloatingViewportSize] = useState<{ w: number; h: number }>(() => ({
+    w: typeof window !== 'undefined' ? window.innerWidth : 1280,
+    h: typeof window !== 'undefined' ? window.innerHeight : 800,
+  }));
+
+  useEffect(() => {
+    setCopiedFloatingSelection(false);
+    if (typeof document === 'undefined' || wordExplainStage !== 'marked' || !selectedTarget) {
+      setHasPdfSelectionCapsule(false);
+      return;
+    }
+    const syncCapsuleState = () => {
+      setHasPdfSelectionCapsule(Boolean(document.querySelector('[data-selection-capsule="true"]')));
+    };
+    syncCapsuleState();
+    const rafId = window.requestAnimationFrame(syncCapsuleState);
+    const onResize = () =>
+      setFloatingViewportSize({ w: window.innerWidth, h: window.innerHeight });
+    window.addEventListener('resize', onResize, { passive: true });
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [selectedTarget, wordExplainStage]);
+
   const [searchHighlightQuery, setSearchHighlightQuery] = useState<string>('');
   const [workspaceTab, setWorkspaceTab] = useState<'daf' | 'controls' | 'study-hub'>('daf');
   const [isGlobalBottomSheetOpen, setIsGlobalBottomSheetOpen] = useState<boolean>(false);
@@ -685,6 +904,9 @@ export function App() {
   const [isStudyCenterCollapsed, setIsStudyCenterCollapsed] = useState<boolean>(false);
   const [activeRealm, setActiveRealm] = useState<SacredRealmId>('talmud');
   const [realmTarget, setRealmTarget] = useState<{ bookId?: string; chapter?: number }>({});
+  const [turBookId, setTurBookId] = useState<string>('Tur,_Orach_Chaim');
+  const [turSiman, setTurSiman] = useState<number>(1);
+  const [turPageDirection, setTurPageDirection] = useState<1 | -1>(1);
   const [citationReturnStack, setCitationReturnStack] = useState<CitationReturnPoint[]>([]);
   const [globalFocusedPane, setGlobalFocusedPane] = useState<{
     paneId: string;
@@ -881,6 +1103,9 @@ export function App() {
   );
   const [offlineCachedCount, setOfflineCachedCount] = useState<number>(0);
   const [globalBottomSearchQuery, setGlobalBottomSearchQuery] = useState<string>('');
+  const [topTractates30Days, setTopTractates30Days] = useState<TopTractateStat[]>(() =>
+    getTopSearchedTractates30Days(5)
+  );
   const [isBottomSearchFocused, setIsBottomSearchFocused] = useState<boolean>(false);
   const bottomSearchInputRef = useRef<HTMLInputElement>(null);
 
@@ -986,6 +1211,8 @@ export function App() {
         tr.nameEn.toLowerCase().includes(q.toLowerCase())
     );
     if (matchTr) {
+      recordTractateSearch(matchTr.id);
+      setTopTractates30Days(getTopSearchedTractates30Days(5));
       if (activeRealm !== 'talmud') setActiveRealm('talmud');
       if (matchTr.id !== selectedTractateId) {
         setSelectedTractateId(matchTr.id);
@@ -1096,6 +1323,21 @@ export function App() {
     });
   }, []);
 
+  const handleToggleKacunaAutoSpeak = useCallback(() => {
+    setSettings((prev) => {
+      const updated = {
+        ...prev,
+        enableKacunaAutoSpeak: !(prev.enableKacunaAutoSpeak ?? false),
+      };
+      try {
+        localStorage.setItem('talmud_app_settings_v2', JSON.stringify(updated));
+      } catch {
+        // ignore
+      }
+      return updated;
+    });
+  }, []);
+
   // Live 3D/Canvas and Font Zoom synchronization state
   const [liveTalmudZoomScale, setLiveTalmudZoomScale] = useState<number>(1);
 
@@ -1154,6 +1396,15 @@ export function App() {
 
   // Dynamic Header & Bottom Navigation Bar visibility synchronized with scrolling
   const [hideBarsOnScroll, setHideBarsOnScroll] = useState<boolean>(false);
+  const hideBarsOnScrollRef = useRef<boolean>(false);
+  hideBarsOnScrollRef.current = hideBarsOnScroll;
+  const [isDafSearchOpen, setIsDafSearchOpen] = useState<boolean>(false);
+  const isDafSearchOpenRef = useRef<boolean>(false);
+  const [isGazeHudOpen, setIsGazeHudOpen] = useState<boolean>(false);
+  const isGazeHudOpenRef = useRef<boolean>(false);
+  const [isAudioSyncOpen, setIsAudioSyncOpen] = useState<boolean>(false);
+  const isAudioSyncOpenRef = useRef<boolean>(false);
+  const hideBarsBeforeSearchRef = useRef<boolean>(false);
   const [isScrolledCompact, setIsScrolledCompact] = useState<boolean>(false);
   const lastScrollPosRef = useRef<Map<EventTarget, number>>(new Map());
   const scrollDeltaAccumRef = useRef<number>(0);
@@ -1162,10 +1413,64 @@ export function App() {
   const isGlobeOpenRef = useRef<boolean>(isGlobeOpen);
   isGlobeOpenRef.current = isGlobeOpen;
 
+  useEffect(() => {
+    const syncTopDrawerBars = (wasAnyOpen: boolean, isAnyOpen: boolean) => {
+      if (!wasAnyOpen && isAnyOpen) {
+        hideBarsBeforeSearchRef.current = hideBarsOnScrollRef.current;
+      } else if (wasAnyOpen && !isAnyOpen) {
+        scrollDeltaAccumRef.current = 0;
+        touchStartYRef.current = null;
+        setHideBarsOnScroll(hideBarsBeforeSearchRef.current);
+      }
+    };
+    const onDafSearchState = (e: Event) => {
+      const nextOpen = Boolean((e as CustomEvent<{ open?: boolean }>).detail?.open);
+      if (nextOpen === isDafSearchOpenRef.current) return;
+      const wasAny =
+        isDafSearchOpenRef.current || isGazeHudOpenRef.current || isAudioSyncOpenRef.current;
+      isDafSearchOpenRef.current = nextOpen;
+      setIsDafSearchOpen(nextOpen);
+      const isAny =
+        isDafSearchOpenRef.current || isGazeHudOpenRef.current || isAudioSyncOpenRef.current;
+      syncTopDrawerBars(wasAny, isAny);
+    };
+    const onGazeHudState = (e: Event) => {
+      const nextOpen = Boolean((e as CustomEvent<{ open?: boolean }>).detail?.open);
+      if (nextOpen === isGazeHudOpenRef.current) return;
+      const wasAny =
+        isDafSearchOpenRef.current || isGazeHudOpenRef.current || isAudioSyncOpenRef.current;
+      isGazeHudOpenRef.current = nextOpen;
+      setIsGazeHudOpen(nextOpen);
+      const isAny =
+        isDafSearchOpenRef.current || isGazeHudOpenRef.current || isAudioSyncOpenRef.current;
+      syncTopDrawerBars(wasAny, isAny);
+    };
+    const onAudioSyncState = (e: Event) => {
+      const nextOpen = Boolean((e as CustomEvent<{ open?: boolean }>).detail?.open);
+      if (nextOpen === isAudioSyncOpenRef.current) return;
+      const wasAny =
+        isDafSearchOpenRef.current || isGazeHudOpenRef.current || isAudioSyncOpenRef.current;
+      isAudioSyncOpenRef.current = nextOpen;
+      setIsAudioSyncOpen(nextOpen);
+      const isAny =
+        isDafSearchOpenRef.current || isGazeHudOpenRef.current || isAudioSyncOpenRef.current;
+      syncTopDrawerBars(wasAny, isAny);
+    };
+    window.addEventListener('talmud-daf-search-state', onDafSearchState);
+    window.addEventListener('talmud-gaze-hud-state', onGazeHudState);
+    window.addEventListener('talmud-audio-sync-state', onAudioSyncState);
+    return () => {
+      window.removeEventListener('talmud-daf-search-state', onDafSearchState);
+      window.removeEventListener('talmud-gaze-hud-state', onGazeHudState);
+      window.removeEventListener('talmud-audio-sync-state', onAudioSyncState);
+    };
+  }, []);
+
   const handleRevealBothBars = useCallback(() => {
     manualRevealLockUntilRef.current = Date.now() + 900;
     scrollDeltaAccumRef.current = 0;
     touchStartYRef.current = null;
+    hideBarsBeforeSearchRef.current = false;
     setHideBarsOnScroll(false);
     setIsScrolledCompact(false);
   }, []);
@@ -1175,12 +1480,214 @@ export function App() {
     manualRevealLockUntilRef.current = Date.now() + 900;
     scrollDeltaAccumRef.current = 0;
     touchStartYRef.current = null;
+    hideBarsBeforeSearchRef.current = false;
     setHideBarsOnScroll(false);
     setIsScrolledCompact(false);
-    if (typeof window !== 'undefined') {
-      window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
+
+    const currentKey = `${selectedTractateId}:${selectedDafId}`;
+    if (prevDafSessionKeyRef.current !== currentKey) {
+      const prevSnap = latestDafScrollRef.current;
+      if (`${prevSnap.tractateId}:${prevSnap.dafId}` === prevDafSessionKeyRef.current) {
+        sessionDafScrollMapRef.current.set(prevDafSessionKeyRef.current, { ...prevSnap });
+      }
+      const savedIncoming = sessionDafScrollMapRef.current.get(currentKey);
+      if (
+        activeRealm === 'talmud' &&
+        !isGlobeOpen &&
+        savedIncoming &&
+        (savedIncoming.scrollY > 10 || savedIncoming.folioScrollTop > 10 || savedIncoming.folioRatio > 0.01)
+      ) {
+        pendingSessionScrollRef.current = { ...savedIncoming };
+      } else {
+        pendingSessionScrollRef.current = null;
+      }
     }
-  }, [activeRealm, isGlobeOpen]);
+
+    const hasPendingRestore =
+      activeRealm === 'talmud' &&
+      !isGlobeOpen &&
+      pendingSessionScrollRef.current &&
+      pendingSessionScrollRef.current.tractateId === selectedTractateId &&
+      pendingSessionScrollRef.current.dafId === selectedDafId;
+    if (typeof window !== 'undefined' && !hasPendingRestore) {
+      window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
+      const fEl = document.getElementById('talmud-daf-folio-anchor');
+      if (fEl) {
+        fEl.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
+      }
+    }
+  }, [activeRealm, isGlobeOpen, selectedTractateId, selectedDafId]);
+
+  // Continuously save last-visited Talmud Daf + scroll position (including on Globe exit, realm switch, or unexpected browser exit)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const currentKey = `${selectedTractateId}:${selectedDafId}`;
+    if (prevDafSessionKeyRef.current !== currentKey) {
+      prevDafSessionKeyRef.current = currentKey;
+      const savedIncoming = sessionDafScrollMapRef.current.get(currentKey);
+      latestDafScrollRef.current = savedIncoming
+        ? { ...savedIncoming }
+        : {
+            tractateId: selectedTractateId,
+            dafId: selectedDafId,
+            scrollY: 0,
+            folioScrollTop: 0,
+            folioRatio: 0,
+          };
+      try {
+        localStorage.setItem(
+          LAST_DAF_SESSION_KEY,
+          JSON.stringify({ ...latestDafScrollRef.current, timestamp: Date.now() })
+        );
+      } catch {
+        // ignore
+      }
+    }
+
+    const captureAndSave = () => {
+      if (activeRealm !== 'talmud' || isGlobeOpen) return;
+      const scrollY = Math.max(0, Math.round(window.scrollY || document.documentElement.scrollTop || 0));
+      const folioEl = document.getElementById('talmud-daf-folio-anchor');
+      const folioScrollTop = folioEl ? Math.max(0, Math.round(folioEl.scrollTop)) : 0;
+      const folioMax = folioEl ? Math.max(1, folioEl.scrollHeight - folioEl.clientHeight) : 1;
+      const folioRatio = folioEl ? Number(Math.min(1, Math.max(0, folioEl.scrollTop / folioMax)).toFixed(4)) : 0;
+      const snapshot = {
+        tractateId: selectedTractateId,
+        dafId: selectedDafId,
+        scrollY,
+        folioScrollTop,
+        folioRatio,
+      };
+      latestDafScrollRef.current = snapshot;
+      sessionDafScrollMapRef.current.set(currentKey, snapshot);
+      try {
+        localStorage.setItem(LAST_DAF_SESSION_KEY, JSON.stringify({ ...snapshot, timestamp: Date.now() }));
+      } catch {
+        // ignore
+      }
+    };
+
+    if (activeRealm === 'talmud' && !isGlobeOpen) {
+      try {
+        localStorage.setItem(
+          LAST_DAF_SESSION_KEY,
+          JSON.stringify({
+            ...latestDafScrollRef.current,
+            tractateId: selectedTractateId,
+            dafId: selectedDafId,
+            timestamp: Date.now(),
+          })
+        );
+      } catch {
+        // ignore
+      }
+    } else if (
+      latestDafScrollRef.current.tractateId === selectedTractateId &&
+      latestDafScrollRef.current.dafId === selectedDafId &&
+      (latestDafScrollRef.current.scrollY > 10 ||
+        latestDafScrollRef.current.folioScrollTop > 10 ||
+        latestDafScrollRef.current.folioRatio > 0.01)
+    ) {
+      pendingSessionScrollRef.current = { ...latestDafScrollRef.current };
+    }
+
+    let timer: number | null = null;
+    const onScrollDebounced = () => {
+      if (activeRealm !== 'talmud' || isGlobeOpen) return;
+      const scrollY = Math.max(0, Math.round(window.scrollY || document.documentElement.scrollTop || 0));
+      const fEl = document.getElementById('talmud-daf-folio-anchor');
+      const folioScrollTop = fEl ? Math.max(0, Math.round(fEl.scrollTop)) : 0;
+      const folioMax = fEl ? Math.max(1, fEl.scrollHeight - fEl.clientHeight) : 1;
+      const folioRatio = fEl ? Number(Math.min(1, Math.max(0, fEl.scrollTop / folioMax)).toFixed(4)) : 0;
+      const snapshot = {
+        tractateId: selectedTractateId,
+        dafId: selectedDafId,
+        scrollY,
+        folioScrollTop,
+        folioRatio,
+      };
+      latestDafScrollRef.current = snapshot;
+      sessionDafScrollMapRef.current.set(currentKey, snapshot);
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(captureAndSave, 140);
+    };
+    const onUrgentExit = () => captureAndSave();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') captureAndSave();
+    };
+
+    const folioEl = document.getElementById('talmud-daf-folio-anchor');
+    window.addEventListener('scroll', onScrollDebounced, { passive: true });
+    folioEl?.addEventListener('scroll', onScrollDebounced, { passive: true });
+    window.addEventListener('pagehide', onUrgentExit);
+    window.addEventListener('beforeunload', onUrgentExit);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      if (timer) window.clearTimeout(timer);
+      window.removeEventListener('scroll', onScrollDebounced);
+      folioEl?.removeEventListener('scroll', onScrollDebounced);
+      window.removeEventListener('pagehide', onUrgentExit);
+      window.removeEventListener('beforeunload', onUrgentExit);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [activeRealm, isGlobeOpen, selectedTractateId, selectedDafId]);
+
+  // Restore saved scroll position when entering/returning to the last-visited Talmud Daf
+  useEffect(() => {
+    if (typeof window === 'undefined' || activeRealm !== 'talmud' || isGlobeOpen) return;
+    const pending = pendingSessionScrollRef.current;
+    if (!pending || pending.tractateId !== selectedTractateId || pending.dafId !== selectedDafId) {
+      return;
+    }
+    if (pending.scrollY <= 10 && pending.folioScrollTop <= 10 && pending.folioRatio <= 0.01) {
+      pendingSessionScrollRef.current = null;
+      return;
+    }
+    pendingSessionScrollRef.current = null;
+    const sessionKey = `${selectedTractateId}:${selectedDafId}`;
+    (window as any).__talmudRestoringLastSessionScroll = sessionKey;
+
+    let cancelled = false;
+    const cancelOnUserScroll = () => {
+      cancelled = true;
+    };
+    window.addEventListener('wheel', cancelOnUserScroll, { passive: true, once: true });
+    window.addEventListener('touchstart', cancelOnUserScroll, { passive: true, once: true });
+
+    const applyScrollRestore = () => {
+      if (cancelled) return;
+      const folioEl = document.getElementById('talmud-daf-folio-anchor');
+      if (isDafMobileFullscreen && folioEl) {
+        const targetTop =
+          pending.folioScrollTop > 10
+            ? pending.folioScrollTop
+            : Math.round(pending.folioRatio * Math.max(0, folioEl.scrollHeight - folioEl.clientHeight));
+        if (targetTop > 0) folioEl.scrollTo({ top: targetTop, behavior: 'auto' });
+      } else if (pending.scrollY > 10) {
+        window.scrollTo({ top: pending.scrollY, behavior: 'auto' });
+      }
+    };
+
+    const rafId = window.requestAnimationFrame(applyScrollRestore);
+    const t1 = window.setTimeout(applyScrollRestore, 160);
+    const t2 = window.setTimeout(applyScrollRestore, 480);
+    const tClear = window.setTimeout(() => {
+      if ((window as any).__talmudRestoringLastSessionScroll === sessionKey) {
+        delete (window as any).__talmudRestoringLastSessionScroll;
+      }
+    }, 750);
+
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(rafId);
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+      window.clearTimeout(tClear);
+      window.removeEventListener('wheel', cancelOnUserScroll);
+      window.removeEventListener('touchstart', cancelOnUserScroll);
+    };
+  }, [activeRealm, isGlobeOpen, selectedTractateId, selectedDafId, isDafMobileFullscreen]);
 
   useEffect(() => {
     const handleRevealAndScrollTop = () => {
@@ -1249,6 +1756,7 @@ export function App() {
       if (!(target instanceof HTMLElement)) return false;
       return Boolean(
         target.closest('header') ||
+          target.closest('[data-daf-search-panel="true"]') ||
           target.closest('[data-modern-dock="true"]') ||
           target.closest('[data-searchable-select-portal="true"]') ||
           target.closest('[data-globe-control="true"]') ||
@@ -1318,6 +1826,13 @@ export function App() {
 
       if (Math.abs(delta) < 2) return;
 
+      if (
+        isDafSearchOpenRef.current ||
+        isGazeHudOpenRef.current ||
+        isAudioSyncOpenRef.current
+      )
+        return;
+
       const winY = window.scrollY || document.documentElement.scrollTop || 0;
       if (winY < 16 && currentY < 16 && delta < 0) {
         scrollDeltaAccumRef.current = 0;
@@ -1344,7 +1859,13 @@ export function App() {
     };
 
     const handleWheelGlobal = (e: WheelEvent) => {
-      if (isGlobeOpenRef.current) return;
+      if (
+        isGlobeOpenRef.current ||
+        isDafSearchOpenRef.current ||
+        isGazeHudOpenRef.current ||
+        isAudioSyncOpenRef.current
+      )
+        return;
       if (Date.now() < manualRevealLockUntilRef.current) return;
       if (e.ctrlKey || e.metaKey) return;
       if (isIgnoredControlTarget(e.target)) return;
@@ -1358,7 +1879,13 @@ export function App() {
     };
 
     const handleTouchStartGlobal = (e: TouchEvent) => {
-      if (isGlobeOpenRef.current || isIgnoredControlTarget(e.target)) {
+      if (
+        isGlobeOpenRef.current ||
+        isDafSearchOpenRef.current ||
+        isGazeHudOpenRef.current ||
+        isAudioSyncOpenRef.current ||
+        isIgnoredControlTarget(e.target)
+      ) {
         touchStartYRef.current = null;
         return;
       }
@@ -1370,7 +1897,13 @@ export function App() {
     };
 
     const handleTouchMoveGlobal = (e: TouchEvent) => {
-      if (isGlobeOpenRef.current) return;
+      if (
+        isGlobeOpenRef.current ||
+        isDafSearchOpenRef.current ||
+        isGazeHudOpenRef.current ||
+        isAudioSyncOpenRef.current
+      )
+        return;
       if (Date.now() < manualRevealLockUntilRef.current) return;
       if (isIgnoredControlTarget(e.target)) return;
       if (e.touches.length !== 1 || touchStartYRef.current === null) return;
@@ -1389,6 +1922,7 @@ export function App() {
     const handleRevealEvent = () => {
       manualRevealLockUntilRef.current = Date.now() + 900;
       scrollDeltaAccumRef.current = 0;
+      hideBarsBeforeSearchRef.current = false;
       setHideBarsOnScroll(false);
     };
 
@@ -1469,8 +2003,20 @@ export function App() {
       if (bookId || chapter) {
         setRealmTarget({ bookId, chapter });
       }
+      if (realmId === 'tur') {
+        if (bookId) {
+          const matchedTur = TUR_BOOKS.find(
+            (b) => b.id === bookId || b.sefariaRef === bookId || b.nameHe === bookId
+          );
+          if (matchedTur) setTurBookId(matchedTur.id);
+        }
+        if (chapter && Number.isFinite(chapter) && chapter >= 1) {
+          setTurSiman(chapter);
+        }
+      }
       if (realmId === 'talmud' && tractateId) {
-        const canon = TRACTATES.find((tr) => tr.id.toLowerCase() === tractateId.toLowerCase());
+        const norm = tractateId.trim().toLowerCase().replace(/[\s-]+/g, '_');
+        const canon = TRACTATES.find((tr) => tr.id.toLowerCase() === norm);
         setSelectedTractateId(canon ? canon.id : tractateId);
         if (dafId) setSelectedDafId(dafId);
       }
@@ -1551,6 +2097,36 @@ export function App() {
       };
     });
   }, [dafList, currentTractate]);
+
+  const currentTurBook = useMemo(
+    () => TUR_BOOKS.find((b) => b.id === turBookId) || TUR_BOOKS[0],
+    [turBookId]
+  );
+
+  const turBookOptions: SelectOption[] = useMemo(
+    () =>
+      TUR_BOOKS.map((b) => ({
+        value: b.id,
+        badgeHe: b.subGroupHe || b.nameHe,
+        label: b.nameKa,
+        sublabel: `${b.nameHe} • 1–${b.chaptersCount} სიმანი`,
+      })),
+    []
+  );
+
+  const turSimanOptions: SelectOption[] = useMemo(() => {
+    const count = currentTurBook?.chaptersCount || 697;
+    return Array.from({ length: count }, (_, idx) => {
+      const n = idx + 1;
+      const gem = numberToHebrewGematria(n);
+      return {
+        value: String(n),
+        badgeHe: `סי׳ ${gem}`,
+        label: `სიმანი ${n} (סימן ${gem})`,
+        sublabel: currentTurBook.nameKa.split(' (')[0],
+      };
+    });
+  }, [currentTurBook]);
 
   // Load Daf data (Curated or live Sefaria with full Commentary Connections)
   useEffect(() => {
@@ -2707,6 +3283,56 @@ export function App() {
     setNotes((prev) => prev.filter((n) => n.id !== id));
   };
 
+  const handlePrevTurSiman = useCallback(
+    (fromBottomBar = false) => {
+      if (fromBottomBar) {
+        lastBottomNavClickRef.current = Date.now();
+        setHideBarsOnScroll(false);
+      }
+      setTurPageDirection(-1);
+      setSelectedTarget(null);
+      setWordExplainStage('none');
+      setSearchHighlightQuery('');
+      playBookPageTurnSound();
+      if (turSiman > 1) {
+        setTurSiman(turSiman - 1);
+      } else {
+        const curIdx = TUR_BOOKS.findIndex((b) => b.id === currentTurBook.id);
+        const prevVol =
+          curIdx > 0 ? TUR_BOOKS[curIdx - 1] : TUR_BOOKS[TUR_BOOKS.length - 1];
+        setTurBookId(prevVol.id);
+        setTurSiman(prevVol.chaptersCount);
+      }
+    },
+    [turSiman, currentTurBook]
+  );
+
+  const handleNextTurSiman = useCallback(
+    (fromBottomBar = false) => {
+      if (fromBottomBar) {
+        lastBottomNavClickRef.current = Date.now();
+        setHideBarsOnScroll(false);
+      }
+      setTurPageDirection(1);
+      setSelectedTarget(null);
+      setWordExplainStage('none');
+      setSearchHighlightQuery('');
+      playBookPageTurnSound();
+      if (turSiman < currentTurBook.chaptersCount) {
+        setTurSiman(turSiman + 1);
+      } else {
+        const curIdx = TUR_BOOKS.findIndex((b) => b.id === currentTurBook.id);
+        const nextVol =
+          curIdx >= 0 && curIdx < TUR_BOOKS.length - 1
+            ? TUR_BOOKS[curIdx + 1]
+            : TUR_BOOKS[0];
+        setTurBookId(nextVol.id);
+        setTurSiman(1);
+      }
+    },
+    [turSiman, currentTurBook]
+  );
+
   const handleToggleDafComplete = (dafKey: string) => {
     const isMarkingComplete = !completedDapim.includes(dafKey);
     setCompletedDapim((prev) =>
@@ -2714,6 +3340,16 @@ export function App() {
     );
     if (isMarkingComplete) {
       const [trId, dId] = dafKey.split(':');
+      const turVol = TUR_BOOKS.find((b) => b.id === trId);
+      if (turVol) {
+        const sNum = Number(dId) || turSiman;
+        emitDafCompletedCelebration({
+          dafKey,
+          labelKa: `${turVol.nameKa.split(' (')[0]} • სიმანი ${sNum}`,
+          labelHe: `${turVol.nameHe} סי׳ ${numberToHebrewGematria(sNum)}`,
+        });
+        return;
+      }
       const trObj = TRACTATES.find((tr) => tr.id === trId) || currentTractate;
       emitDafCompletedCelebration({
         dafKey,
@@ -2822,23 +3458,34 @@ export function App() {
               ? 'bg-[#0F1E33]/98 border-b border-[#1E3352] shadow-[0_4px_24px_rgba(0,0,0,0.5)]'
               : 'bg-[#F2F7FC]/98 border-b border-[#CFE1F4] shadow-[0_2px_14px_rgba(15,35,60,0.06)]'
         } backdrop-blur-xl flex items-center justify-between gap-2 transition-all duration-500 ease-in-out ${
-          barsHidden || isDafMobileFullscreen
+          barsHidden ||
+          isDafMobileFullscreen ||
+          isDafSearchOpen ||
+          isGazeHudOpen ||
+          isAudioSyncOpen
             ? '-translate-y-full opacity-0 pointer-events-none'
             : 'translate-y-0 opacity-100'
         }`}
       >
-        {/* Left Brand Zone: Just Master Crown Menu Trigger */}
-        <div className="flex items-center shrink-0">
+        {/* Left Brand Zone: Deep Recessed 3D Glass Socket with Golden Rim + Spinning Sphere Crown & Magen David */}
+        <div className="crystal-sphere-socket shrink-0">
           <button
             type="button"
+            data-raw-btn="true"
             onClick={() => setIsLogoMenuOpen((v) => !v)}
             title="აპლიკაციის მენიუ — კრისტალური სამეფო გვირგვინი და მბრუნავი მაგენ დავითი"
-            className="relative w-8 h-8 sm:w-9 sm:h-9 md:w-10 md:h-10 rounded-xl flex items-center justify-center border shadow-xs shrink-0 border-[#C49A6C] dark:border-[#C49A6C]/60 bg-gradient-to-b from-[#FAF5EB] to-[#E8D8BE] dark:from-[#3D2617] dark:to-[#24160D] text-amber-900 dark:text-amber-200 hover:scale-105 active:scale-95 transition-transform cursor-pointer"
+            aria-label="აპლიკაციის მენიუ"
+            className="crystal-orb relative w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center shrink-0 hover:scale-105 active:scale-95 transition-transform cursor-pointer focus:outline-none"
           >
-            <SpinningCrystalCrownMagenDavidEmblem size={28} />
-            <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-amber-600 text-white border border-white dark:border-[#24160D] flex items-center justify-center z-30 shadow-xs">
-              <Menu className="w-2 h-2" />
-            </span>
+            <AxialRotatingSphereCanvas accentColor="#F59E0B" idx={0} />
+            <motion.span
+              animate={{ rotateY: [0, 360] }}
+              transition={{ duration: 6, repeat: Infinity, ease: 'linear' }}
+              style={{ transformStyle: 'preserve-3d' }}
+              className="relative z-10 flex items-center justify-center"
+            >
+              <SpinningCrystalCrownMagenDavidEmblem size={24} />
+            </motion.span>
           </button>
         </div>
 
@@ -3219,18 +3866,22 @@ export function App() {
           </button>
         </div>
 
-        {/* Fixed day/night switch — always pinned to the top-right corner */}
-        <button
-          type="button"
-          onClick={cycleNextTheme}
-          className="w-9 h-9 flex items-center justify-center shrink-0 cursor-pointer active:scale-95 transition-transform"
-          title={isDark ? 'დღის რეჟიმი' : 'ღამის რეჟიმი'}
-          aria-label={isDark ? 'დღის რეჟიმზე გადასვლა' : 'ღამის რეჟიმზე გადასვლა'}
-        >
-          <AnimatedGlobeIconWrapper duration={6}>
-            {isDark ? <Sun className="w-4 h-4 stroke-[2.25]" /> : <Moon className="w-4 h-4 stroke-[2.25]" />}
-          </AnimatedGlobeIconWrapper>
-        </button>
+        {/* Fixed day/night switch — seated inside deep recessed 3D golden-rimmed glass sphere socket */}
+        <div className="crystal-sphere-socket shrink-0">
+          <button
+            type="button"
+            data-raw-btn="true"
+            onClick={cycleNextTheme}
+            className="crystal-orb relative w-9 h-9 sm:w-10 sm:h-10 rounded-full flex items-center justify-center shrink-0 hover:scale-105 active:scale-95 transition-transform cursor-pointer focus:outline-none"
+            title={isDark ? 'დღის რეჟიმი' : 'ღამის რეჟიმი'}
+            aria-label={isDark ? 'დღის რეჟიმზე გადასვლა' : 'ღამის რეჟიმზე გადასვლა'}
+          >
+            <AxialRotatingSphereCanvas accentColor="#F59E0B" idx={1} />
+            <AnimatedGlobeIconWrapper duration={6}>
+              {isDark ? <Sun className="w-4 h-4 stroke-[2.25]" /> : <Moon className="w-4 h-4 stroke-[2.25]" />}
+            </AnimatedGlobeIconWrapper>
+          </button>
+        </div>
       </header>
 
       {/* VIEWPORT-CLAMPED RECENTLY VIEWED DAFIM DROPDOWN (SOFT SLOW FADE-IN / FADE-OUT) */}
@@ -3408,8 +4059,8 @@ export function App() {
         )}
       </AnimatePresence>
 
-      {/* DAILY STUDY DEDICATION & SINGLE-LINE QUICK ACCESS REALMS RIBBON (Hidden in Siddur & Torah so user lands directly on Daf) */}
-      {showAboveDaf && activeRealm !== 'siddur' && activeRealm !== 'torah' && (
+      {/* DAILY STUDY DEDICATION & SINGLE-LINE QUICK ACCESS REALMS RIBBON (Hidden in Siddur, Torah & Tur so user lands directly on Daf) */}
+      {showAboveDaf && activeRealm !== 'siddur' && activeRealm !== 'torah' && activeRealm !== 'tur' && (
         <DailyStudyDedicationRibbon
           activeDedication={activeDedication}
           onOpenDedicationModal={() => setIsDedicationModalOpen(true)}
@@ -3522,6 +4173,24 @@ export function App() {
               handleNavigateFromVoiceOrAi(trId, dId, secId);
             }}
           />
+        ) : activeRealm === 'tur' ? (
+          <TurDafInterface
+            bookId={turBookId}
+            siman={turSiman}
+            direction={turPageDirection}
+            isDark={isDark}
+            dafFontSizeScale={dafFontSizeScale}
+            selectedTarget={selectedTarget}
+            onSelectWordOrSentence={handleSelectWordOrSentence}
+            searchHighlightQuery={searchHighlightQuery}
+            onPrevSiman={() => handlePrevTurSiman(false)}
+            onNextSiman={() => handleNextTurSiman(false)}
+            externalFullViewport={isDafMobileFullscreen}
+            onExternalToggleFullViewport={handleToggleDafFullscreen}
+            onOpenFloatingSourceDaf={(req) => setFloatingSourceDafRequest(req)}
+            onRecordCitationReturnPoint={handleRecordCitationReturnPoint}
+            pendingReturnRestore={pendingReturnRestore}
+          />
         ) : activeRealm !== 'talmud' ? (
           <ClassicSacredDafView
             realmId={activeRealm}
@@ -3600,6 +4269,7 @@ export function App() {
             enablePdfProgressHighlight={Boolean(settings.enablePdfProgressHighlight)}
             enableGemaraBoldToggle={Boolean(settings.enableGemaraBoldToggle)}
             enableRashiFocusMode={Boolean(settings.enableRashiFocusMode)}
+            enableCommentaryJumpSpotlight={Boolean(settings.enableCommentaryJumpSpotlight)}
             belowDafStudyCenter={
               showBelowDaf ? (
                 <SmartStudyPanels
@@ -3700,6 +4370,8 @@ export function App() {
         uiLang={uiLang}
         onChangeUiLang={setUiLang}
         onlineCount={onlineCount}
+        enableAutoSpeak={settings.enableKacunaAutoSpeak ?? false}
+        onToggleAutoSpeak={handleToggleKacunaAutoSpeak}
       />
 
       {/* AUTH / ONLINE USERS, STUDY DEDICATION, AND FINANCE/ALIYOT MODALS */}
@@ -3914,36 +4586,40 @@ export function App() {
               {/* TOP STRETCH HANDLE + SINGLE-LINE DOCK BAR WITH FLAT MODERN BUTTONS */}
               <div className="px-2.5 sm:px-3.5 pt-[22px] pb-2 flex flex-col gap-1">
 
-                {/* SINGLE HORIZONTAL ROW: STATIC LEFT/RIGHT PAGE-TURN BUTTONS + SLIDING ICON-ONLY TRACK IN CENTER */}
+                {/* SINGLE HORIZONTAL ROW: STATIC LEFT/RIGHT PAGE-TURN BUTTONS + LOGICALLY GROUPED DAF CONTROLS */}
                 <div data-crystal-bar="true" className="flex items-center justify-between gap-2">
-                  {/* LEFT STATIC PAGE-TURNING BUTTON (წინა დაფი — მხოლოდ აიკონი, სტატიკური) */}
-                  <button
-                    type="button"
-                    data-raw-btn="true"
-                    data-flat-btn="true"
-                    onClick={() => {
-                      lastBottomNavClickRef.current = Date.now();
-                      setHideBarsOnScroll(false);
-                      if (activeRealm === 'talmud') {
-                        handlePrevAmud(true);
-                      } else {
-                        playBookPageTurnSound();
-                        window.dispatchEvent(new CustomEvent('global-page-prev'));
-                        window.dispatchEvent(
-                          new CustomEvent('sacred-daf-step', { detail: { dir: 'prev' } })
-                        );
-                      }
-                    }}
-                    className="w-9 h-9 rounded-xl bg-white/90 dark:bg-stone-800/85 hover:bg-amber-500/15 text-stone-800 dark:text-stone-100 hover:text-amber-800 dark:hover:text-amber-300 border border-stone-300/70 dark:border-white/10 flex items-center justify-center cursor-pointer transition-all shrink-0 shadow-xs active:scale-95"
-                    title="წინა დაფზე გადაფურცვლა"
-                    aria-label="წინა დაფი"
-                  >
-                    <AnimatedGlobeIconWrapper duration={5}>
-                      <ArrowRight className="w-4 h-4 stroke-[2.25] shrink-0" />
-                    </AnimatedGlobeIconWrapper>
-                  </button>
+                  {/* LEFT STATIC PAGE-TURNING BUTTON IN RECESSED 3D GLASS SPHERE SOCKET (წინა დაფი / სიმანი) */}
+                  <div className="crystal-sphere-socket shrink-0">
+                    <button
+                      type="button"
+                      data-raw-btn="true"
+                      onClick={() => {
+                        lastBottomNavClickRef.current = Date.now();
+                        setHideBarsOnScroll(false);
+                        if (activeRealm === 'talmud') {
+                          handlePrevAmud(true);
+                        } else if (activeRealm === 'tur') {
+                          handlePrevTurSiman(true);
+                        } else {
+                          playBookPageTurnSound();
+                          window.dispatchEvent(new CustomEvent('global-page-prev'));
+                          window.dispatchEvent(
+                            new CustomEvent('sacred-daf-step', { detail: { dir: 'prev' } })
+                          );
+                        }
+                      }}
+                      className="crystal-orb relative w-9 h-9 rounded-full flex items-center justify-center shrink-0 hover:scale-105 active:scale-95 transition-transform cursor-pointer focus:outline-none"
+                      title={activeRealm === 'tur' ? 'წინა სიმანზე გადაფურცვლა' : 'წინა დაფზე გადაფურცვლა'}
+                      aria-label={activeRealm === 'tur' ? 'წინა სიმანი' : 'წინა დაფი'}
+                    >
+                      <AxialRotatingSphereCanvas accentColor="#F59E0B" idx={2} />
+                      <AnimatedGlobeIconWrapper duration={5}>
+                        <ArrowRight className="w-4 h-4 stroke-[2.25] shrink-0" />
+                      </AnimatedGlobeIconWrapper>
+                    </button>
+                  </div>
 
-                  {/* MIDDLE HORIZONTALLY SLIDING ICON-ONLY BUTTONS TRACK (აქეთ-იქით დაცურავს, მხოლოდ აიკონები) */}
+                  {/* MIDDLE HORIZONTALLY SLIDING TRACK — DAF-RELATED CONTROLS ONLY (NO GLOBAL DUPLICATES) */}
                   <div
                     onWheel={(e) => {
                       if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
@@ -3952,80 +4628,97 @@ export function App() {
                     }}
                     className="flex-1 min-w-0 overflow-x-auto no-scrollbar flex items-center gap-1.5 crystal-pocket py-1 touch-pan-x scroll-smooth"
                   >
-                    <button
-                      type="button"
-                      data-raw-btn="true"
-                      onClick={() => setIsMishnahMapOpen(true)}
-                      className="mishnah-pill"
-                      title="მიმდინარე ტრაქტატის მიშნები"
-                      aria-label="მიშნა"
-                    >
-                      <ScrollText className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                      <span>მიშნა</span>
-                      <span className="he" dir="rtl">משנה</span>
-                    </button>
-                    {/* 2. Current Tractate & Daf Indicator Pill (Quick Selector Opener) */}
+                    {/* GROUP 1: DAF STRUCTURE & PROGRESS */}
+                    {activeRealm === 'talmud' && (
+                      <button
+                        type="button"
+                        data-raw-btn="true"
+                        onClick={() => setIsMishnahMapOpen(true)}
+                        className="mishnah-pill"
+                        title="მიმდინარე ტრაქტატის მიშნები"
+                        aria-label="მიშნა"
+                      >
+                        <AnimatedGlobeIconWrapper duration={6}>
+                          <ScrollText className="w-3.5 h-3.5 text-amber-200 shrink-0" />
+                        </AnimatedGlobeIconWrapper>
+                        <span>მიშნა</span>
+                        <span className="he" dir="rtl">משנה</span>
+                      </button>
+                    )}
+
+                    {/* Current Daf / Tur Siman Indicator Pill */}
                     <button
                       type="button"
                       data-raw-btn="true"
                       data-flat-btn="true"
-                      onClick={() => setIsCascadingSelectorOpen(true)}
+                      onClick={() => {
+                        if (activeRealm === 'talmud') {
+                          setIsCascadingSelectorOpen(true);
+                        } else {
+                          setIsGlobalBottomSheetOpen(true);
+                        }
+                      }}
                       className="h-9 px-3 rounded-xl border border-[#C5B49D] dark:border-amber-400/40 bg-white/95 hover:bg-[#FAF4EC] dark:bg-[#201812] dark:hover:bg-[#2B2018] text-[#140C04] dark:text-[#FAF5EB] flex items-center gap-1.5 shrink-0 cursor-pointer font-black text-xs shadow-xs transition-all active:scale-95"
-                      title="კასკადური სარჩევი • 4 სვეტიანი არჩევა (სედერი • ტრაქტატი • ფერეკი • მიშნა)"
+                      title={
+                        activeRealm === 'tur'
+                          ? 'არბაა ტურიმის ტომისა და სიმანის არჩევა'
+                          : activeRealm === 'talmud'
+                            ? 'კასკადური სარჩევი • 4 სვეტიანი არჩევა (სედერი • ტრაქტატი • ფერეკი • მიშნა)'
+                            : 'წიგნისა და თავის არჩევა'
+                      }
                     >
                       <AnimatedGlobeIconWrapper duration={6}>
                         <BookOpen className="w-3.5 h-3.5 text-amber-700 dark:text-amber-400 shrink-0" />
                       </AnimatedGlobeIconWrapper>
-                      <span className="truncate max-w-[110px] sm:max-w-[150px] font-black text-[11px] sm:text-xs">
+                      <span className="truncate max-w-[140px] sm:max-w-[190px] font-black text-[11px] sm:text-xs">
                         {activeRealm === 'talmud'
                           ? `${currentTractate.nameKa.split(' (')[0]} ${selectedDafId}`
-                          : SACRED_REALMS.find((r) => r.id === activeRealm)?.titleKa || 'თალმუდი'}
+                          : activeRealm === 'tur'
+                            ? `ტური • ${currentTurBook.subGroupHe} ${turSiman}`
+                            : SACRED_REALMS.find((r) => r.id === activeRealm)?.titleKa || 'თალმუდი'}
                       </span>
                     </button>
 
-                    {/* 3. Expand Daf to Full Mobile / Desktop Screen (დაფის გაშლა მთლიან ეკრანზე) */}
-                    <button
-                      type="button"
-                      data-raw-btn="true"
-                      data-flat-btn="true"
-                      onClick={handleToggleDafFullscreen}
-                      className={`w-9 h-9 rounded-xl border flex items-center justify-center cursor-pointer transition-all shrink-0 shadow-xs active:scale-95 ${
-                        isDafMobileFullscreen
-                          ? 'bg-amber-500 text-stone-950 font-black border-amber-400 shadow-sm ring-2 ring-amber-400/40'
-                          : 'bg-white/90 dark:bg-stone-800/85 hover:bg-amber-500/15 text-stone-800 dark:text-stone-200 border-stone-300/70 dark:border-white/10'
-                      }`}
-                      title={
-                        isDafMobileFullscreen
-                          ? 'მთლიანი ეკრანიდან გამოსვლა'
-                          : 'დაფის გაშლა მთლიან მობილურის ეკრანზე (Fullscreen)'
-                      }
-                      aria-label="მთლიან ეკრანზე გაშლა"
-                    >
-                      <AnimatedGlobeIconWrapper duration={6}>
-                        {isDafMobileFullscreen ? (
-                          <Minimize2 className="w-4 h-4 stroke-[2.25] shrink-0" />
-                        ) : (
-                          <Maximize2 className="w-4 h-4 stroke-[2.25] shrink-0" />
-                        )}
-                      </AnimatedGlobeIconWrapper>
-                    </button>
+                    {/* Toggle Daf / Siman Completed */}
+                    {(() => {
+                      const completionKey =
+                        activeRealm === 'tur'
+                          ? `${currentTurBook.id}:${turSiman}`
+                          : `${currentTractate.id}:${selectedDafId}`;
+                      const isDone = completedDapim.includes(completionKey);
+                      return (
+                        <button
+                          type="button"
+                          data-raw-btn="true"
+                          data-flat-btn="true"
+                          onClick={() => handleToggleDafComplete(completionKey)}
+                          className={`w-9 h-9 rounded-xl border flex items-center justify-center cursor-pointer transition-all shrink-0 shadow-xs active:scale-95 ${
+                            isDone
+                              ? 'bg-emerald-500/25 border-emerald-500 text-emerald-800 dark:text-emerald-300 font-bold'
+                              : 'bg-white/90 dark:bg-stone-800/85 hover:bg-emerald-500/15 border-stone-300/70 dark:border-white/10 text-stone-800 dark:text-stone-200'
+                          }`}
+                          title={
+                            isDone
+                              ? activeRealm === 'tur'
+                                ? 'სიმანი შესწავლილია ✓'
+                                : 'დაფი შესწავლილია ✓'
+                              : activeRealm === 'tur'
+                                ? 'მონიშნე სიმანი შესწავლილად (Completed)'
+                                : 'მონიშნე დაფი შესწავლილად (Completed)'
+                          }
+                          aria-label="მონიშნე შესწავლილად"
+                        >
+                          <AnimatedGlobeIconWrapper duration={5.5}>
+                            <CheckCircle2 className="w-4 h-4 shrink-0" />
+                          </AnimatedGlobeIconWrapper>
+                        </button>
+                      );
+                    })()}
 
-                    {/* Offline daf database */}
-                    <button
-                      type="button"
-                      data-raw-btn="true"
-                      data-flat-btn="true"
-                      onClick={() => setIsOfflineLibraryModalOpen(true)}
-                      className="w-9 h-9 rounded-xl bg-white/90 dark:bg-stone-800/85 hover:bg-amber-500/15 text-stone-800 dark:text-stone-200 border border-stone-300/70 dark:border-white/10 flex items-center justify-center cursor-pointer transition-all shrink-0 shadow-xs active:scale-95"
-                      title="დაფების ბაზა ტელეფონში"
-                      aria-label="დაფების ბაზა ტელეფონში"
-                    >
-                      <AnimatedGlobeIconWrapper duration={6}>
-                        <HardDrive className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
-                      </AnimatedGlobeIconWrapper>
-                    </button>
+                    <div className="w-[1px] h-5 bg-stone-400/35 dark:bg-amber-300/20 mx-0.5 shrink-0" />
 
-                    {/* 4. Bookmark / Jump to Stopped Line (სანიშნე — ბოლოს შეჩერებულ ხაზზე გადასვლა) */}
+                    {/* GROUP 2: READING & TEXT NAVIGATION */}
+                    {/* Bookmark / Jump to Stopped Line */}
                     <button
                       type="button"
                       data-raw-btn="true"
@@ -4046,7 +4739,7 @@ export function App() {
                       </AnimatedGlobeIconWrapper>
                     </button>
 
-                    {/* 5. Stopped Line Stepper (წინა / შემდეგი სტრიქონი) */}
+                    {/* Stopped Line Stepper */}
                     <div className="flex items-center gap-0.5 rounded-xl border border-stone-300/70 dark:border-white/10 bg-white/90 dark:bg-stone-800/85 p-0.5 shrink-0 shadow-xs">
                       <button
                         type="button"
@@ -4089,7 +4782,7 @@ export function App() {
                       </button>
                     </div>
 
-                    {/* 6. Line Translation Mode Toggle */}
+                    {/* Line Translation Mode Toggle */}
                     <button
                       type="button"
                       data-raw-btn="true"
@@ -4108,8 +4801,11 @@ export function App() {
                       </AnimatedGlobeIconWrapper>
                     </button>
 
-                    {/* 7. Modern Interactive Zoom Controls (Working ZoomOut, Live % / Reset, ZoomIn) */}
-                    <div className="flex items-center gap-0.5 rounded-xl border border-stone-300/80 dark:border-amber-400/25 bg-white/95 dark:bg-stone-900/90 p-0.5 shrink-0 shadow-sm backdrop-blur-md">
+                    <div className="w-[1px] h-5 bg-stone-400/35 dark:bg-amber-300/20 mx-0.5 shrink-0" />
+
+                    {/* GROUP 3: DAF VIEWPORT, ZOOM & ACTIVE COLUMN */}
+                    {/* Modern Interactive Zoom Controls */}
+                    <div className="flex items-center gap-0.5 rounded-xl border border-stone-300/80 dark:border-amber-400/25 bg-white/95 dark:bg-stone-900/90 p-0.5 shrink-0 shadow-sm">
                       <button
                         type="button"
                         data-raw-btn="true"
@@ -4154,7 +4850,34 @@ export function App() {
                       </button>
                     </div>
 
-                    {/* 8. Active-Field Windows Collapse / Minimize Button (Icon-Only) */}
+                    {/* Expand Daf to Full Screen */}
+                    <button
+                      type="button"
+                      data-raw-btn="true"
+                      data-flat-btn="true"
+                      onClick={handleToggleDafFullscreen}
+                      className={`w-9 h-9 rounded-xl border flex items-center justify-center cursor-pointer transition-all shrink-0 shadow-xs active:scale-95 ${
+                        isDafMobileFullscreen
+                          ? 'bg-amber-500 text-stone-950 font-black border-amber-400 shadow-sm ring-2 ring-amber-400/40'
+                          : 'bg-white/90 dark:bg-stone-800/85 hover:bg-amber-500/15 text-stone-800 dark:text-stone-200 border-stone-300/70 dark:border-white/10'
+                      }`}
+                      title={
+                        isDafMobileFullscreen
+                          ? 'მთლიანი ეკრანიდან გამოსვლა'
+                          : 'დაფის გაშლა მთლიან ეკრანზე (Fullscreen)'
+                      }
+                      aria-label="მთლიან ეკრანზე გაშლა"
+                    >
+                      <AnimatedGlobeIconWrapper duration={6}>
+                        {isDafMobileFullscreen ? (
+                          <Minimize2 className="w-4 h-4 stroke-[2.25] shrink-0" />
+                        ) : (
+                          <Maximize2 className="w-4 h-4 stroke-[2.25] shrink-0" />
+                        )}
+                      </AnimatedGlobeIconWrapper>
+                    </button>
+
+                    {/* Active-Field Collapse / Minimize Button */}
                     {globalFocusedPane && (
                       <button
                         type="button"
@@ -4178,7 +4901,7 @@ export function App() {
                         title={
                           globalFocusedPane.isMinimized
                             ? `${globalFocusedPane.titleKa} — ჩაკეცილი ველის აღდგენა`
-                            : `${globalFocusedPane.titleKa} — ამ ველის ჩაკეცვა (Windows Minimize)`
+                            : `${globalFocusedPane.titleKa} — ამ ველის ჩაკეცვა (Minimize)`
                         }
                         aria-label="ველის ჩაკეცვა"
                       >
@@ -4189,7 +4912,7 @@ export function App() {
                       </button>
                     )}
 
-                    {/* 9. Active-Field Windows Expand / Maximize Button (Icon-Only) */}
+                    {/* Active-Field Expand / Maximize Button */}
                     {globalFocusedPane && (
                       <button
                         type="button"
@@ -4206,7 +4929,7 @@ export function App() {
                           )
                         }
                         className="w-9 h-9 rounded-xl bg-white/90 dark:bg-stone-800/85 hover:bg-amber-500/15 text-stone-800 dark:text-stone-200 border border-stone-300/70 dark:border-white/10 flex items-center justify-center cursor-pointer transition-all shrink-0 relative shadow-xs active:scale-95"
-                        title={`${globalFocusedPane.titleKa} — ამ ველის გაშლა (Windows Expand)`}
+                        title={`${globalFocusedPane.titleKa} — ამ ველის გაშლა (Expand)`}
                         aria-label="ველის გაშლა"
                       >
                         <AnimatedGlobeIconWrapper duration={5}>
@@ -4216,7 +4939,9 @@ export function App() {
                       </button>
                     )}
 
-                    {/* 10. Dedicated Real-Time Georgian Voice-to-Text Input for Search Bar */}
+                    <div className="w-[1px] h-5 bg-stone-400/35 dark:bg-amber-300/20 mx-0.5 shrink-0" />
+
+                    {/* GROUP 4: FAST ON-DAF VOICE SEARCH & AI ANALYSIS */}
                     <button
                       type="button"
                       data-raw-btn="true"
@@ -4230,7 +4955,7 @@ export function App() {
                       title={
                         isRealtimeVoiceActive
                           ? 'ქართული ხმოვანი ჩაწერის შეჩერება (Ctrl+Shift+S)'
-                          : 'ქართული ხმოვანი ძიება საძიებო ზოლში (Ctrl+Shift+S)'
+                          : 'ქართული ხმოვანი ძიება დაფზე (Ctrl+Shift+S)'
                       }
                       aria-label="ქართული ხმოვანი ძიება"
                     >
@@ -4248,7 +4973,6 @@ export function App() {
                       )}
                     </button>
 
-                    {/* 11. AI Analysis & Search (Icon-Only) */}
                     <button
                       type="button"
                       data-raw-btn="true"
@@ -4265,101 +4989,105 @@ export function App() {
                       </AnimatedGlobeIconWrapper>
                     </button>
 
-                    {/* 12. Recently Viewed Dapim (Icon-Only) */}
-                    <button
-                      type="button"
-                      data-raw-btn="true"
-                      data-flat-btn="true"
-                      onClick={() => setIsRecentDropdownOpen((v) => !v)}
-                      className="w-9 h-9 rounded-xl bg-white/90 dark:bg-stone-800/85 hover:bg-amber-500/15 border border-stone-300/70 dark:border-white/10 text-stone-800 dark:text-stone-200 flex items-center justify-center cursor-pointer transition-all shrink-0 shadow-xs active:scale-95"
-                      title="ბოლოს ნანახი დაფები"
-                      aria-label="ისტორია"
-                    >
-                      <AnimatedGlobeIconWrapper duration={6}>
-                        <History className="w-4 h-4 shrink-0" />
-                      </AnimatedGlobeIconWrapper>
-                    </button>
+                    {activeRealm === 'talmud' && (
+                      <>
+                        <div className="w-[1px] h-5 bg-stone-400/35 dark:bg-amber-300/20 mx-0.5 shrink-0" />
 
-                    {/* 13. Galactic Globe / Orbs Portal (Icon-Only) */}
-                    <button
-                      type="button"
-                      data-raw-btn="true"
-                      data-flat-btn="true"
-                      onClick={() => setIsGlobeOpen(true)}
-                      className="w-9 h-9 rounded-xl bg-white/90 dark:bg-stone-800/85 hover:bg-amber-500/15 border border-stone-300/70 dark:border-white/10 text-stone-800 dark:text-stone-200 flex items-center justify-center cursor-pointer transition-all shrink-0 shadow-xs active:scale-95"
-                      title="გალაქტიკური გლობუსის / ბურთულების გახსნა"
-                      aria-label="გლობუსი"
-                    >
-                      <AnimatedMiniGlobeIcon sizeClass="w-6 h-6" iconSizeClass="w-3.5 h-3.5" />
-                    </button>
+                        {/* Audio Sync Drawer Toggle (Bottom Dock Only — Slides Down Top Bar) */}
+                        <button
+                          type="button"
+                          data-raw-btn="true"
+                          data-flat-btn="true"
+                          aria-pressed={isAudioSyncOpen}
+                          onClick={() => {
+                            window.dispatchEvent(new CustomEvent('talmud-toggle-audio-sync'));
+                          }}
+                          className={`h-9 w-9 sm:w-auto sm:px-2.5 rounded-xl border flex items-center justify-center gap-1.5 cursor-pointer transition-all shrink-0 shadow-xs active:scale-95 ${
+                            isAudioSyncOpen
+                              ? 'bg-amber-500 text-stone-950 font-black border-amber-400 shadow-sm ring-2 ring-amber-400/40'
+                              : 'bg-white/90 dark:bg-stone-800/85 hover:bg-amber-500/15 text-stone-800 dark:text-stone-200 border-stone-300/70 dark:border-white/10'
+                          }`}
+                          title="აუდიო სინქი — აუდიო გაკვეთილის სინქრონიზაცია დაფის ტექსტთან"
+                          aria-label="აუდიო სინქი"
+                        >
+                          <AnimatedGlobeIconWrapper duration={5.5}>
+                            <Headphones
+                              className={`w-4 h-4 shrink-0 ${
+                                isAudioSyncOpen
+                                  ? 'text-stone-950'
+                                  : 'text-amber-600 dark:text-amber-400'
+                              }`}
+                            />
+                          </AnimatedGlobeIconWrapper>
+                          <span className="hidden sm:inline text-[11px] font-black whitespace-nowrap">
+                            აუდიო სინქი
+                          </span>
+                        </button>
 
-                    {/* 14. Settings Modal (Icon-Only) */}
-                    <button
-                      type="button"
-                      data-raw-btn="true"
-                      data-flat-btn="true"
-                      onClick={() => setIsSettingsModalOpen(true)}
-                      className="w-9 h-9 rounded-xl bg-white/90 dark:bg-stone-800/85 hover:bg-amber-500/15 border border-stone-300/70 dark:border-white/10 text-stone-800 dark:text-stone-200 flex items-center justify-center cursor-pointer transition-all shrink-0 shadow-xs active:scale-95"
-                      title="პარამეტრები"
-                      aria-label="პარამეტრები"
-                    >
-                      <AnimatedGlobeIconWrapper duration={6.5}>
-                        <Settings className="w-4 h-4 shrink-0" />
-                      </AnimatedGlobeIconWrapper>
-                    </button>
+                        {/* Eye-Tracking Navigation Drawer Toggle (Slides Down Top Bar) */}
+                        <button
+                          type="button"
+                          data-raw-btn="true"
+                          data-flat-btn="true"
+                          aria-pressed={isGazeHudOpen}
+                          onClick={() => {
+                            window.dispatchEvent(new CustomEvent('talmud-toggle-gaze-hud'));
+                          }}
+                          className={`h-9 w-9 sm:w-auto sm:px-2.5 rounded-xl border flex items-center justify-center gap-1.5 cursor-pointer transition-all shrink-0 shadow-xs active:scale-95 ${
+                            isGazeHudOpen
+                              ? 'bg-amber-500 text-stone-950 font-black border-amber-400 shadow-sm ring-2 ring-amber-400/40'
+                              : 'bg-white/90 dark:bg-stone-800/85 hover:bg-amber-500/15 text-stone-800 dark:text-stone-200 border-stone-300/70 dark:border-white/10'
+                          }`}
+                          title="თვალით ნავიგაცია — თვალის მოძრაობით ინტერაქცია"
+                          aria-label="თვალით ნავიგაცია"
+                        >
+                          <AnimatedGlobeIconWrapper duration={5.5}>
+                            <Eye
+                              className={`w-4 h-4 shrink-0 ${
+                                isGazeHudOpen
+                                  ? 'text-stone-950'
+                                  : 'text-amber-600 dark:text-amber-400'
+                              }`}
+                            />
+                          </AnimatedGlobeIconWrapper>
+                          <span className="hidden sm:inline text-[11px] font-black whitespace-nowrap">
+                            თვალით ნავიგაცია
+                          </span>
+                        </button>
+                      </>
+                    )}
+                  </div>
 
-                    {/* 15. Toggle Daf Completed (Triggers Celebratory Confetti) */}
+                  {/* RIGHT STATIC PAGE-TURNING BUTTON IN RECESSED 3D GLASS SPHERE SOCKET (შემდეგი დაფი / სიმანი) */}
+                  <div className="crystal-sphere-socket shrink-0">
                     <button
                       type="button"
                       data-raw-btn="true"
-                      data-flat-btn="true"
-                      onClick={() =>
-                        handleToggleDafComplete(`${currentTractate.id}:${selectedDafId}`)
-                      }
-                      className={`w-9 h-9 rounded-xl border flex items-center justify-center cursor-pointer transition-all shrink-0 shadow-xs active:scale-95 ${
-                        completedDapim.includes(`${currentTractate.id}:${selectedDafId}`)
-                          ? 'bg-emerald-500/25 border-emerald-500 text-emerald-800 dark:text-emerald-300 font-bold'
-                          : 'bg-white/90 dark:bg-stone-800/85 hover:bg-emerald-500/15 border-stone-300/70 dark:border-white/10 text-stone-800 dark:text-stone-200'
-                      }`}
-                      title={
-                        completedDapim.includes(`${currentTractate.id}:${selectedDafId}`)
-                          ? 'დაფი შესწავლილია ✓'
-                          : 'მონიშნე დაფი შესწავლილად (Completed)'
-                      }
-                      aria-label="მონიშნე შესწავლილად"
+                      onClick={() => {
+                        lastBottomNavClickRef.current = Date.now();
+                        setHideBarsOnScroll(false);
+                        if (activeRealm === 'talmud') {
+                          handleNextAmud(true);
+                        } else if (activeRealm === 'tur') {
+                          handleNextTurSiman(true);
+                        } else {
+                          playBookPageTurnSound();
+                          window.dispatchEvent(new CustomEvent('global-page-next'));
+                          window.dispatchEvent(
+                            new CustomEvent('sacred-daf-step', { detail: { dir: 'next' } })
+                          );
+                        }
+                      }}
+                      className="crystal-orb relative w-9 h-9 rounded-full flex items-center justify-center shrink-0 hover:scale-105 active:scale-95 transition-transform cursor-pointer focus:outline-none"
+                      title={activeRealm === 'tur' ? 'შემდეგ სიმანზე გადაფურცვლა' : 'შემდეგ დაფზე გადაფურცვლა'}
+                      aria-label={activeRealm === 'tur' ? 'შემდეგი სიმანი' : 'შემდეგი დაფი'}
                     >
-                      <AnimatedGlobeIconWrapper duration={5.5}>
-                        <CheckCircle2 className="w-4 h-4 shrink-0" />
+                      <AxialRotatingSphereCanvas accentColor="#F59E0B" idx={3} />
+                      <AnimatedGlobeIconWrapper duration={5}>
+                        <ArrowLeft className="w-4 h-4 stroke-[2.25] shrink-0" />
                       </AnimatedGlobeIconWrapper>
                     </button>
                   </div>
-
-                  {/* RIGHT STATIC PAGE-TURNING BUTTON (შემდეგი დაფი — მხოლოდ აიკონი, სტატიკური) */}
-                  <button
-                    type="button"
-                    data-raw-btn="true"
-                    data-flat-btn="true"
-                    onClick={() => {
-                      lastBottomNavClickRef.current = Date.now();
-                      setHideBarsOnScroll(false);
-                      if (activeRealm === 'talmud') {
-                        handleNextAmud(true);
-                      } else {
-                        playBookPageTurnSound();
-                        window.dispatchEvent(new CustomEvent('global-page-next'));
-                        window.dispatchEvent(
-                          new CustomEvent('sacred-daf-step', { detail: { dir: 'next' } })
-                        );
-                      }
-                    }}
-                    className="w-9 h-9 rounded-xl bg-white/90 dark:bg-stone-800/85 hover:bg-amber-500/15 text-stone-800 dark:text-stone-100 hover:text-amber-800 dark:hover:text-amber-300 border border-stone-300/70 dark:border-white/10 flex items-center justify-center cursor-pointer transition-all shrink-0 shadow-xs active:scale-95"
-                    title="შემდეგ დაფზე გადაფურცვლა"
-                    aria-label="შემდეგი დაფი"
-                  >
-                    <AnimatedGlobeIconWrapper duration={5}>
-                      <ArrowLeft className="w-4 h-4 stroke-[2.25] shrink-0" />
-                    </AnimatedGlobeIconWrapper>
-                  </button>
                 </div>
               </div>
 
@@ -4548,40 +5276,36 @@ export function App() {
                           </button>
                         </div>
 
-                        {/* Instant Search Results Strip */}
-                        {globalBottomSearchQuery.trim().length > 0 && (
-                          <div className="bg-[#241912] border border-[#4A3322] rounded-xl p-2 max-h-36 overflow-y-auto flex flex-col gap-1">
-                            {TRACTATES.filter(
+                        {/* Top 5 Searched Tractates D3 Bubble Visualization (when query is empty) */}
+                        {globalBottomSearchQuery.trim().length === 0 && (
+                          <PopularTractatesD3Chart
+                            stats={topTractates30Days}
+                            theme={theme}
+                            isDark={isDark}
+                            onSelectTractate={(tractateId) => {
+                              recordTractateSearch(tractateId);
+                              setTopTractates30Days(getTopSearchedTractates30Days(5));
+                              setActiveRealm('talmud');
+                              setSelectedTractateId(tractateId);
+                              setSelectedDafId('2a');
+                              setGlobalBottomSearchQuery('');
+                              setIsGlobalBottomSheetOpen(false);
+                            }}
+                          />
+                        )}
+
+                        {/* Instant Search Results Strip with Cascading Framer Motion Reveal */}
+                        <AnimatePresence mode="wait">
+                          {globalBottomSearchQuery.trim().length > 0 && (() => {
+                            const qLower = globalBottomSearchQuery.trim().toLowerCase();
+                            const qRaw = globalBottomSearchQuery.trim();
+                            const matchedTractates = TRACTATES.filter(
                               (tr) =>
-                                tr.nameKa.toLowerCase().includes(globalBottomSearchQuery.trim().toLowerCase()) ||
-                                tr.nameHe.includes(globalBottomSearchQuery.trim()) ||
-                                tr.nameEn.toLowerCase().includes(globalBottomSearchQuery.trim().toLowerCase())
-                            )
-                              .slice(0, 5)
-                              .map((tr) => (
-                                <button
-                                  key={`bottom-search-tr-${tr.id}`}
-                                  type="button"
-                                  data-raw-btn="true"
-                                  data-flat-btn="true"
-                                  onClick={() => {
-                                    setActiveRealm('talmud');
-                                    setSelectedTractateId(tr.id);
-                                    setSelectedDafId('2a');
-                                    setGlobalBottomSearchQuery('');
-                                    setIsGlobalBottomSheetOpen(false);
-                                  }}
-                                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-amber-500/20 flex items-center justify-between gap-2 text-xs transition-colors cursor-pointer text-[#FAF5EB]"
-                                >
-                                  <span className="font-bold text-[#FAF5EB] truncate">
-                                    ტრაქტატი: {tr.nameKa}
-                                  </span>
-                                  <span dir="rtl" className="font-serif font-bold text-amber-400 shrink-0">
-                                    {tr.nameHe}
-                                  </span>
-                                </button>
-                              ))}
-                            {[
+                                tr.nameKa.toLowerCase().includes(qLower) ||
+                                tr.nameHe.includes(qRaw) ||
+                                tr.nameEn.toLowerCase().includes(qLower)
+                            ).slice(0, 5);
+                            const matchedSentences = [
                               ...(dafData.mishnah || []),
                               ...(dafData.gemara || []),
                               ...(dafData.rashi || []),
@@ -4589,37 +5313,83 @@ export function App() {
                             ]
                               .filter(
                                 (s) =>
-                                  (s.translationKa || '')
-                                    .toLowerCase()
-                                    .includes(globalBottomSearchQuery.trim().toLowerCase()) ||
-                                  (s.hebrewText || '').includes(globalBottomSearchQuery.trim())
+                                  (s.translationKa || '').toLowerCase().includes(qLower) ||
+                                  (s.hebrewText || '').includes(qRaw)
                               )
-                              .slice(0, 6)
-                              .map((s) => (
-                                <button
-                                  key={`bottom-search-sent-${s.id}`}
-                                  type="button"
-                                  data-raw-btn="true"
-                                  data-flat-btn="true"
-                                  onClick={() => {
-                                    setHighlightedSentenceId(s.id);
-                                    setIsGlobalBottomSheetOpen(false);
-                                  }}
-                                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-amber-500/20 flex items-center justify-between gap-2 text-xs transition-colors cursor-pointer text-[#FAF5EB]"
-                                >
-                                  <span className="font-semibold text-stone-200 truncate flex-1">
-                                    {s.translationKa}
-                                  </span>
-                                  <span
-                                    dir="rtl"
-                                    className="font-serif text-[11px] font-bold text-amber-300 truncate max-w-[40%]"
+                              .slice(0, 6);
+
+                            return (
+                              <motion.div
+                                key={`bottom-search-results-${qRaw}`}
+                                data-bottom-search-results="true"
+                                variants={searchResultsCascadeVariants}
+                                initial="hidden"
+                                animate="visible"
+                                exit="hidden"
+                                className="bg-[#241912] border border-[#4A3322] rounded-xl p-2 max-h-40 overflow-y-auto flex flex-col gap-1"
+                              >
+                                {matchedTractates.map((tr) => (
+                                  <motion.button
+                                    key={`bottom-search-tr-${tr.id}`}
+                                    variants={searchResultItemVariants}
+                                    type="button"
+                                    data-raw-btn="true"
+                                    data-flat-btn="true"
+                                    onClick={() => {
+                                      recordTractateSearch(tr.id);
+                                      setTopTractates30Days(getTopSearchedTractates30Days(5));
+                                      setActiveRealm('talmud');
+                                      setSelectedTractateId(tr.id);
+                                      setSelectedDafId('2a');
+                                      setGlobalBottomSearchQuery('');
+                                      setIsGlobalBottomSheetOpen(false);
+                                    }}
+                                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-amber-500/20 flex items-center justify-between gap-2 text-xs transition-colors cursor-pointer text-[#FAF5EB]"
                                   >
-                                    {s.hebrewText}
-                                  </span>
-                                </button>
-                              ))}
-                          </div>
-                        )}
+                                    <span className="font-bold text-[#FAF5EB] truncate">
+                                      ტრაქტატი: {tr.nameKa}
+                                    </span>
+                                    <span dir="rtl" className="font-serif font-bold text-amber-400 shrink-0">
+                                      {tr.nameHe}
+                                    </span>
+                                  </motion.button>
+                                ))}
+                                {matchedSentences.map((s) => (
+                                  <motion.button
+                                    key={`bottom-search-sent-${s.id}`}
+                                    variants={searchResultItemVariants}
+                                    type="button"
+                                    data-raw-btn="true"
+                                    data-flat-btn="true"
+                                    onClick={() => {
+                                      setHighlightedSentenceId(s.id);
+                                      setIsGlobalBottomSheetOpen(false);
+                                    }}
+                                    className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-amber-500/20 flex items-center justify-between gap-2 text-xs transition-colors cursor-pointer text-[#FAF5EB]"
+                                  >
+                                    <span className="font-semibold text-stone-200 truncate flex-1">
+                                      {s.translationKa}
+                                    </span>
+                                    <span
+                                      dir="rtl"
+                                      className="font-serif text-[11px] font-bold text-amber-300 truncate max-w-[40%]"
+                                    >
+                                      {s.hebrewText}
+                                    </span>
+                                  </motion.button>
+                                ))}
+                                {matchedTractates.length === 0 && matchedSentences.length === 0 && (
+                                  <motion.div
+                                    variants={searchResultItemVariants}
+                                    className="px-2.5 py-2 text-center text-[11px] text-amber-200/70"
+                                  >
+                                    დაფზე და ტრაქტატებში დამთხვევა ვერ მოიძებნა — დააჭირეთ „ძიებას“ AI პასუხისთვის
+                                  </motion.div>
+                                )}
+                              </motion.div>
+                            );
+                          })()}
+                        </AnimatePresence>
                       </motion.div>
 
                       {/* ROW 2: ALL SACRED REALMS ICON-ONLY BUTTONS (WRAPPED IN STAGGERED ITEM VARIANT) */}
@@ -4686,89 +5456,172 @@ export function App() {
                         </div>
                       </motion.div>
 
-                      {/* ROW 3: CASCADING FILTER MODAL QUICK LAUNCHER (WRAPPED IN STAGGERED ITEM VARIANT + SOFT CALM PALETTE) */}
-                      <motion.div
-                        variants={cascadingMenuItemVariants}
-                        className="w-full"
-                      >
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsGlobalBottomSheetOpen(false);
-                            setIsCascadingSelectorOpen(true);
-                          }}
-                          className={`w-full py-2.5 px-3.5 rounded-xl border font-bold text-xs sm:text-[13px] flex items-center justify-center gap-2 cursor-pointer shadow-xs transition-all active:scale-[0.99] ${
-                            theme === 'celestial-slate'
-                              ? 'bg-[#E0EFFC] hover:bg-[#D5E9FA] border-[#94B8DC] text-[#0F172A]'
-                              : 'bg-[#281D15] hover:bg-[#33251B] border-[#4A3425] text-[#FAF5EB]'
-                          }`}
-                        >
-                          <Layers className={`w-4 h-4 shrink-0 ${theme === 'celestial-slate' ? 'text-sky-600' : 'text-[#E5B87E]'}`} />
-                          <span className="truncate">კასკადური სარჩევი • 4 სვეტიანი ფილტრაცია (სედერი • ტრაქტატი • ფერეკი • მიშნა)</span>
-                        </button>
-                      </motion.div>
+                      {/* ROW 3 & 4: CONTEXTUAL REALM NAVIGATION INSIDE THE SHARED CRYSTAL PANEL */}
+                      {activeRealm === 'tur' ? (
+                        <>
+                          <motion.div
+                            variants={cascadingMenuItemVariants}
+                            className="grid grid-cols-2 sm:grid-cols-4 gap-2"
+                          >
+                            {TUR_BOOKS.map((vol) => {
+                              const isActiveVol = vol.id === currentTurBook.id;
+                              return (
+                                <button
+                                  key={vol.id}
+                                  type="button"
+                                  data-raw-btn="true"
+                                  data-flat-btn="true"
+                                  onClick={() => {
+                                    setTurBookId(vol.id);
+                                    setTurSiman(1);
+                                  }}
+                                  className={`px-3 py-2 rounded-xl border text-left transition-all cursor-pointer flex flex-col gap-0.5 active:scale-95 ${
+                                    isActiveVol
+                                      ? 'bg-amber-500 text-stone-950 border-amber-400 font-black shadow-sm'
+                                      : theme === 'celestial-slate'
+                                        ? 'bg-white hover:bg-slate-100 border-[#BED4EB] text-[#0F172A]'
+                                        : isDark
+                                          ? 'bg-[#281D15] hover:bg-[#33251B] border-[#4A3425] text-[#FAF5EB]'
+                                          : 'bg-white hover:bg-[#F3E9D8] border-[#D6C4AD] text-[#2C180B]'
+                                  }`}
+                                >
+                                  <span dir="rtl" className="font-serif text-sm font-black leading-tight">
+                                    {vol.subGroupHe}
+                                  </span>
+                                  <span className="text-[11px] font-bold opacity-85 truncate">
+                                    {vol.nameKa.split(' (')[0]}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </motion.div>
 
-                      {/* ROW 4: 3 SYMMETRICAL MODERN FILTER SELECTORS FOR SHAS (WRAPPED IN STAGGERED ITEM VARIANT) */}
-                      <motion.div
-                        variants={cascadingMenuItemVariants}
-                        className="grid grid-cols-1 sm:grid-cols-3 gap-2"
-                      >
-                        <SearchableSelect
-                          label={t.sederLabel}
-                          options={sederOptions}
-                          value={selectedSederId}
-                          onChange={(val) => {
-                            setSelectedSederId(val);
-                            if (val !== 'all') {
-                              const firstInSeder = TRACTATES.find((tr) => tr.sederId === val);
-                              if (firstInSeder) {
-                                setSelectedTractateId(firstInSeder.id);
+                          <motion.div
+                            variants={cascadingMenuItemVariants}
+                            className="grid grid-cols-1 sm:grid-cols-2 gap-2"
+                          >
+                            <SearchableSelect
+                              label="ტურის ტომი (ארבעה טורים)"
+                              options={turBookOptions}
+                              value={currentTurBook.id}
+                              onChange={(val) => {
+                                setTurBookId(val);
+                                setTurSiman(1);
+                              }}
+                              placeholder="აირჩიეთ ტური..."
+                              variant="modern"
+                              compact
+                              theme={theme}
+                              isDark={isDark}
+                            />
+
+                            <SearchableSelect
+                              label="სიმანი (סימן)"
+                              options={turSimanOptions}
+                              value={String(turSiman)}
+                              onChange={(val) => {
+                                const parsed = parseInt(val, 10);
+                                if (Number.isFinite(parsed) && parsed >= 1) {
+                                  setTurPageDirection(parsed >= turSiman ? 1 : -1);
+                                  setTurSiman(parsed);
+                                  setIsGlobalBottomSheetOpen(false);
+                                }
+                              }}
+                              placeholder="ძიება სიმანით..."
+                              variant="modern"
+                              compact
+                              theme={theme}
+                              isDark={isDark}
+                            />
+                          </motion.div>
+                        </>
+                      ) : (
+                        <>
+                          {/* ROW 3: CASCADING FILTER MODAL QUICK LAUNCHER (WRAPPED IN STAGGERED ITEM VARIANT + SOFT CALM PALETTE) */}
+                          <motion.div
+                            variants={cascadingMenuItemVariants}
+                            className="w-full"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsGlobalBottomSheetOpen(false);
+                                setIsCascadingSelectorOpen(true);
+                              }}
+                              className={`w-full py-2.5 px-3.5 rounded-xl border font-bold text-xs sm:text-[13px] flex items-center justify-center gap-2 cursor-pointer shadow-xs transition-all active:scale-[0.99] ${
+                                theme === 'celestial-slate'
+                                  ? 'bg-[#E0EFFC] hover:bg-[#D5E9FA] border-[#94B8DC] text-[#0F172A]'
+                                  : 'bg-[#281D15] hover:bg-[#33251B] border-[#4A3425] text-[#FAF5EB]'
+                              }`}
+                            >
+                              <Layers className={`w-4 h-4 shrink-0 ${theme === 'celestial-slate' ? 'text-sky-600' : 'text-[#E5B87E]'}`} />
+                              <span className="truncate">კასკადური სარჩევი • 4 სვეტიანი ფილტრაცია (სედერი • ტრაქტატი • ფერეკი • მიშნა)</span>
+                            </button>
+                          </motion.div>
+
+                          {/* ROW 4: 3 SYMMETRICAL MODERN FILTER SELECTORS FOR SHAS (WRAPPED IN STAGGERED ITEM VARIANT) */}
+                          <motion.div
+                            variants={cascadingMenuItemVariants}
+                            className="grid grid-cols-1 sm:grid-cols-3 gap-2"
+                          >
+                            <SearchableSelect
+                              label={t.sederLabel}
+                              options={sederOptions}
+                              value={selectedSederId}
+                              onChange={(val) => {
+                                setSelectedSederId(val);
+                                if (val !== 'all') {
+                                  const firstInSeder = TRACTATES.find((tr) => tr.sederId === val);
+                                  if (firstInSeder) {
+                                    setSelectedTractateId(firstInSeder.id);
+                                    setSelectedDafId('2a');
+                                  }
+                                }
+                              }}
+                              placeholder={t.searchPlaceholder}
+                              variant="modern"
+                              compact
+                              theme={theme}
+                              isDark={isDark}
+                            />
+
+                            <SearchableSelect
+                              label={t.tractateLabel}
+                              options={tractateOptions}
+                              value={selectedTractateId}
+                              onChange={(val) => {
+                                if (activeRealm !== 'talmud') setActiveRealm('talmud');
+                                setSelectedTractateId(val);
                                 setSelectedDafId('2a');
-                              }
-                            }
-                          }}
-                          placeholder={t.searchPlaceholder}
-                          variant="modern"
-                          compact
-                          theme={theme}
-                          isDark={isDark}
-                        />
+                              }}
+                              placeholder={t.searchPlaceholder}
+                              variant="modern"
+                              compact
+                              theme={theme}
+                              isDark={isDark}
+                            />
 
-                        <SearchableSelect
-                          label={t.tractateLabel}
-                          options={tractateOptions}
-                          value={selectedTractateId}
-                          onChange={(val) => {
-                            if (activeRealm !== 'talmud') setActiveRealm('talmud');
-                            setSelectedTractateId(val);
-                            setSelectedDafId('2a');
-                          }}
-                          placeholder={t.searchPlaceholder}
-                          variant="modern"
-                          compact
-                          theme={theme}
-                          isDark={isDark}
-                        />
-
-                        <SearchableSelect
-                          label={t.dafLabel}
-                          options={dafOptions}
-                          value={selectedDafId}
-                          onChange={(val) => {
-                            if (activeRealm !== 'talmud') setActiveRealm('talmud');
-                            const curIdx = dafList.indexOf(selectedDafId);
-                            const nextIdx = dafList.indexOf(val);
-                            setPageTurnDirection(nextIdx >= curIdx ? 1 : -1);
-                            setSelectedDafId(val);
-                            setIsGlobalBottomSheetOpen(false);
-                          }}
-                          placeholder={t.searchPlaceholder}
-                          variant="modern"
-                          compact
-                          theme={theme}
-                          isDark={isDark}
-                        />
-                      </motion.div>
+                            <SearchableSelect
+                              label={t.dafLabel}
+                              options={dafOptions}
+                              value={selectedDafId}
+                              onChange={(val) => {
+                                if (activeRealm !== 'talmud') setActiveRealm('talmud');
+                                const curIdx = dafList.indexOf(selectedDafId);
+                                const nextIdx = dafList.indexOf(val);
+                                setPageTurnDirection(nextIdx >= curIdx ? 1 : -1);
+                                setSelectedDafId(val);
+                                setIsGlobalBottomSheetOpen(false);
+                              }}
+                              placeholder={t.searchPlaceholder}
+                              variant="modern"
+                              compact
+                              theme={theme}
+                              isDark={isDark}
+                            />
+                          </motion.div>
+                        </>
+                      )}
                     </div>
                   </motion.div>
                 )}
@@ -4777,6 +5630,146 @@ export function App() {
           </motion.nav>
         </>
       )}
+
+      {/* FLOATING 3D CRYSTAL-TROUGH COPY / EXPLAIN WINDOW (Viewport-clamped with dynamic above/below flip) */}
+      <AnimatePresence>
+        {selectedTarget &&
+          wordExplainStage === 'marked' &&
+          !hasPdfSelectionCapsule &&
+          (() => {
+            const floatW = Math.min(324, Math.max(240, floatingViewportSize.w - 24));
+            const floatH = 92;
+            const pos = clampFloatingWindowToViewport({
+              anchorRect: selectedTarget.rect,
+              windowWidth: floatW,
+              windowHeight: floatH,
+              viewportW: floatingViewportSize.w,
+              viewportH: floatingViewportSize.h,
+            });
+            return (
+              <motion.div
+                key="floating-copy-explain-crystal"
+                data-floating-copy-explain="true"
+                initial={{
+                  opacity: 0,
+                  scale: 0.94,
+                  y: pos.placement === 'above' ? 8 : -8,
+                }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{
+                  opacity: 0,
+                  scale: 0.95,
+                  y: pos.placement === 'above' ? 6 : -6,
+                }}
+                transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                style={{
+                  position: 'fixed',
+                  left: `${pos.left}px`,
+                  top: `${pos.top}px`,
+                  width: `${floatW}px`,
+                  zIndex: 318,
+                  maxWidth: 'calc(100vw - 24px)',
+                }}
+                className="pointer-events-auto crystal-selection-capsule px-2.5 pt-2 pb-2 select-none"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <span
+                  aria-hidden="true"
+                  data-placement={pos.placement}
+                  style={{
+                    left: `${pos.arrowLeft}px`,
+                    ...(pos.placement === 'above' ? { bottom: '-6px' } : { top: '-6px' }),
+                  }}
+                  className="crystal-selection-caret"
+                />
+
+                <div className="px-1.5 pb-1.5 flex items-center justify-between gap-2 min-w-0">
+                  <div
+                    className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
+                    dir="rtl"
+                  >
+                    <span className="crystal-selection-meta-he text-[14px] font-bold text-amber-800 dark:text-amber-200">
+                      {selectedTarget.word}
+                    </span>
+                  </div>
+                  <span className="shrink-0 text-[10.5px] font-extrabold opacity-75 whitespace-nowrap">
+                    {selectedTarget.sentence.source === 'rashi'
+                      ? 'რაში'
+                      : selectedTarget.sentence.source === 'tosafot'
+                        ? 'თოსაფოთი'
+                        : selectedTarget.sentence.source === 'mishnah'
+                          ? 'მიშნა'
+                          : 'მონიშნული'}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <div className="crystal-selection-trough flex-1 min-w-0 flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      data-raw-btn="true"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const text = (selectedTarget.word || '').trim();
+                        if (text && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+                          navigator.clipboard.writeText(text).catch(() => {});
+                        }
+                        setCopiedFloatingSelection(true);
+                        window.setTimeout(() => setCopiedFloatingSelection(false), 1600);
+                      }}
+                      className="crystal-selection-action-pill flex-1 justify-center cursor-pointer"
+                      title="მონიშნული ტექსტის კოპირება"
+                    >
+                      <span
+                        className="crystal-selection-orb-badge"
+                        data-tone={copiedFloatingSelection ? 'emerald' : 'amber'}
+                      >
+                        {copiedFloatingSelection ? (
+                          <Check className="w-3.5 h-3.5 shrink-0" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5 shrink-0" />
+                        )}
+                      </span>
+                      <span>{copiedFloatingSelection ? 'დაკოპირდა' : 'კოპირება'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      data-raw-btn="true"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setWordExplainStage('note');
+                      }}
+                      className="crystal-selection-action-pill flex-1 justify-center cursor-pointer"
+                      title="სიტყვისა და კონტექსტის ახსნა"
+                    >
+                      <span className="crystal-selection-orb-badge" data-tone="sky">
+                        <BookOpen className="w-3.5 h-3.5 shrink-0" />
+                      </span>
+                      <span>ახსნა</span>
+                    </button>
+                  </div>
+
+                  <div className="crystal-selection-close-socket">
+                    <button
+                      type="button"
+                      data-raw-btn="true"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedTarget(null);
+                        setWordExplainStage('none');
+                      }}
+                      title="დახურვა"
+                      className="crystal-selection-close-btn cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            );
+          })()}
+      </AnimatePresence>
 
       {/* WORD & SENTENCE INTERACTIVE POPOVER (Stage 2: Compact Note Window -> Stage 3: Deep Explanation Screen) */}
       <AnimatePresence>

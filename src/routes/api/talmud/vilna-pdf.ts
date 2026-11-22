@@ -15,10 +15,52 @@ const SHAS_SLUG: Record<string, string> = {
   Niddah: "niddah",
 };
 
+const TRACTATE_ALIASES: Record<string, string> = {
+  berachos: "Berakhot",
+  shabbos: "Shabbat",
+  eiruvin: "Eruvin",
+  beitza: "Beitzah",
+  taanis: "Taanit",
+  megila: "Megillah",
+  chagiga: "Chagigah",
+  yevamos: "Yevamot",
+  kesubos: "Ketubot",
+  nedorim: "Nedarim",
+  sota: "Sotah",
+  gitin: "Gittin",
+  kidushin: "Kiddushin",
+  baba_kamma: "Bava_Kamma",
+  baba_kama: "Bava_Kamma",
+  bava_kama: "Bava_Kamma",
+  baba_metzia: "Bava_Metzia",
+  baba_batra: "Bava_Batra",
+  makkos: "Makkot",
+  shevuos: "Shevuot",
+  horayos: "Horayot",
+  menachos: "Menachot",
+  chulin: "Chullin",
+  bechoros: "Bekhorot",
+  arachin: "Arakhin",
+  erechin: "Arakhin",
+  kereisos: "Keritot",
+  krisos: "Keritot",
+  meilah: "Meilah",
+  nida: "Niddah",
+  suka: "Sukkah",
+};
+
 export function shasPdfUrl(tractate: string, daf: string): string | null {
-  const key = Object.keys(SHAS_SLUG).find((k) => k.toLowerCase() === tractate.trim().toLowerCase());
+  const norm = tractate.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const aliasTarget = TRACTATE_ALIASES[norm] || norm;
+  const key = Object.keys(SHAS_SLUG).find(
+    (k) => k.toLowerCase() === norm || k.toLowerCase() === aliasTarget.toLowerCase(),
+  );
   const slug = key ? SHAS_SLUG[key] : undefined;
-  const m = /^(\d{1,3})([ab])$/i.exec(daf.trim());
+  let cleanDaf = daf.trim().toLowerCase().replace(/[()[\]\s]/g, "");
+  if (/^\d{1,3}:$/.test(cleanDaf)) cleanDaf = `${cleanDaf.slice(0, -1)}b`;
+  else if (/^\d{1,3}\.?$/.test(cleanDaf)) cleanDaf = `${cleanDaf.replace(/\.$/, "")}a`;
+  else cleanDaf = cleanDaf.replace(/\.$/, "");
+  const m = /^(\d{1,3})([ab])$/i.exec(cleanDaf);
   if (!slug || !m) return null;
   return `https://www.shas.org/daf-pdf/api/?masechta=${slug}&daf=${parseInt(m[1] ?? "2", 10)}&amud=${(m[2] ?? "a").toLowerCase()}`;
 }
@@ -33,8 +75,14 @@ export const Route = createFileRoute("/api/talmud/vilna-pdf")({
         const upstreamUrl = shasPdfUrl(tractate, daf);
         if (!upstreamUrl) return new Response("Unknown tractate or daf", { status: 400 });
 
+        if (request.signal?.aborted) {
+          return new Response(null, { status: 499 });
+        }
+
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 15000);
+        const onClientAbort = () => controller.abort();
+        request.signal?.addEventListener("abort", onClientAbort, { once: true });
         try {
           const upstream = await fetch(upstreamUrl, {
             signal: controller.signal,
@@ -57,9 +105,13 @@ export const Route = createFileRoute("/api/talmud/vilna-pdf")({
             },
           });
         } catch {
+          if (request.signal?.aborted) {
+            return new Response(null, { status: 499 });
+          }
           return new Response("Upstream unavailable", { status: 504 });
         } finally {
           clearTimeout(timer);
+          request.signal?.removeEventListener("abort", onClientAbort);
         }
       },
     },

@@ -178,7 +178,14 @@ export const PdfSharpZoomTile: React.FC<Props> = ({ baseCanvasRef, pageRef, tint
     window.addEventListener('scroll', onMove, { passive: true, capture: true });
     window.addEventListener('resize', onMove);
     return () => {
+      seqRef.current += 1;
       if (timerRef.current) window.clearTimeout(timerRef.current);
+      try {
+        taskRef.current?.cancel?.();
+      } catch {
+        // ignore
+      }
+      taskRef.current = null;
       window.removeEventListener('talmud-zoom-state-change', onZoom);
       window.removeEventListener('touchend', onMove);
       window.removeEventListener('touchmove', onPinchMove);

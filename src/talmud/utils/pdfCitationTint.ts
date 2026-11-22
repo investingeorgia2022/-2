@@ -64,6 +64,8 @@ export function tintCitationHotspotsBlueOnCanvas(
 export type InkRgb = [number, number, number];
 export const RASHI_INK: InkRgb = [21, 128, 61]; // #15803d
 export const TOSAFOT_INK: InkRgb = [159, 18, 57]; // #9f1239
+export const HACHI_GARSINAN_INK: InkRgb = [126, 34, 206]; // #7e22ce (purple)
+export const DUPLICATE_GEMARA_INK: InkRgb = [234, 88, 12]; // #ea580c (carrot orange)
 
 /**
  * Recolours only ink pixels of the given hotspots. `split` paints the right

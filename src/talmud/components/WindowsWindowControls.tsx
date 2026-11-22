@@ -46,14 +46,14 @@ export const WindowsWindowControls: React.FC<WindowsWindowControlsProps> = ({
   closeTitle = 'დახურვა',
   className = '',
 }) => {
-  const btnSizeClass =
+  const orbSizeClass =
     size === 'xs'
-      ? 'w-5 h-4.5 text-[8.5px]'
+      ? 'w-5.5 h-5.5 text-[8.5px]'
       : size === 'md'
-        ? 'w-7 h-5.5 text-[10px]'
-        : 'w-5.5 h-5 text-[9px]';
+        ? 'w-7 h-7 text-[10px]'
+        : 'w-6 h-6 text-[9px]';
 
-  const iconSize = size === 'xs' ? 7.5 : size === 'md' ? 9.5 : 8.5;
+  const iconSize = size === 'xs' ? 8.5 : size === 'md' ? 10.5 : 9.5;
   const effectiveFullScreenHandler = onToggleFullScreen || onToggleMaximize;
   const effectiveIsFullScreen = isFullScreen !== undefined ? isFullScreen : isMaximized;
 
@@ -62,35 +62,20 @@ export const WindowsWindowControls: React.FC<WindowsWindowControlsProps> = ({
       dir="ltr"
       data-daf-word="true"
       onClick={(e) => e.stopPropagation()}
-      style={{
-        boxShadow: isDark
-          ? '0 2px 8px rgba(0,0,0,0.5), inset 0 0.5px 0 rgba(255,255,255,0.12)'
-          : '0 1px 4px rgba(60,38,20,0.12), inset 0 0.5px 0 rgba(255,255,255,0.85)',
-      }}
-      className={`inline-flex items-center rounded-md overflow-hidden border backdrop-blur-md select-none shrink-0 ml-auto transition-all duration-150 ${
-        isDark
-          ? 'bg-[#1F150E]/95 border-[#C49A6C]/35 text-[#F3E5D0]'
-          : 'bg-[#FFFDF9]/95 border-[#8B5A2B]/25 text-[#2C1A10]'
-      } ${className}`}
+      className={`crystal-selection-trough inline-flex items-center gap-1 select-none shrink-0 ml-auto transition-all duration-150 ${className}`}
     >
       {onToggleMinimize && (
         <button
           type="button"
           data-daf-word="true"
+          data-raw-btn="true"
+          data-tone={isMinimized ? 'amber' : undefined}
           onClick={(e) => {
             e.stopPropagation();
             onToggleMinimize(e);
           }}
           title={isMinimized ? 'ფანჯრის გაშლა (Expand)' : minimizeTitle}
-          className={`${btnSizeClass} inline-flex items-center justify-center transition-colors duration-100 cursor-pointer active:scale-95 ${
-            isMinimized
-              ? isDark
-                ? 'bg-amber-500/25 text-amber-300 hover:bg-amber-500/35'
-                : 'bg-amber-500/20 text-[#5C3A21] hover:bg-amber-500/30'
-              : isDark
-                ? 'hover:bg-amber-500/20 hover:text-amber-200'
-                : 'hover:bg-amber-500/15 hover:text-[#4A2C17]'
-          }`}
+          className={`${orbSizeClass} crystal-corner-orb cursor-pointer`}
         >
           {isMinimized ? (
             /* Expand icon when minimized */
@@ -98,7 +83,7 @@ export const WindowsWindowControls: React.FC<WindowsWindowControlsProps> = ({
               <path
                 d="M2.5 4.5L6 8L9.5 4.5"
                 stroke="currentColor"
-                strokeWidth="1.3"
+                strokeWidth="1.4"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
@@ -108,7 +93,7 @@ export const WindowsWindowControls: React.FC<WindowsWindowControlsProps> = ({
                 x2="9.5"
                 y2="9.5"
                 stroke="currentColor"
-                strokeWidth="1.2"
+                strokeWidth="1.3"
                 strokeLinecap="round"
               />
             </svg>
@@ -121,7 +106,7 @@ export const WindowsWindowControls: React.FC<WindowsWindowControlsProps> = ({
                 x2="9.5"
                 y2="6.5"
                 stroke="currentColor"
-                strokeWidth="1.3"
+                strokeWidth="1.5"
                 strokeLinecap="round"
               />
             </svg>
@@ -133,20 +118,14 @@ export const WindowsWindowControls: React.FC<WindowsWindowControlsProps> = ({
         <button
           type="button"
           data-daf-word="true"
+          data-raw-btn="true"
+          data-tone={isMaximized ? 'sky' : undefined}
           onClick={(e) => {
             e.stopPropagation();
             onToggleMaximize(e);
           }}
           title={isMaximized ? restoreTitle : maximizeTitle}
-          className={`${btnSizeClass} inline-flex items-center justify-center border-l transition-colors duration-100 cursor-pointer active:scale-95 ${
-            isMaximized
-              ? isDark
-                ? 'border-[#C49A6C]/20 bg-sky-500/25 text-sky-200 hover:bg-sky-500/35'
-                : 'border-[#8B5A2B]/20 bg-sky-500/20 text-sky-900 hover:bg-sky-500/30'
-              : isDark
-                ? 'border-[#C49A6C]/20 hover:bg-sky-500/20 hover:text-sky-200'
-                : 'border-[#8B5A2B]/20 hover:bg-sky-500/15 hover:text-sky-900'
-          }`}
+          className={`${orbSizeClass} crystal-corner-orb cursor-pointer`}
         >
           {isMaximized ? (
             /* Classic Windows Restore Down Overlapping Squares (❐) */
@@ -154,7 +133,7 @@ export const WindowsWindowControls: React.FC<WindowsWindowControlsProps> = ({
               <path
                 d="M4.5 3.8V2.4H9.6V7.5H8.2"
                 stroke="currentColor"
-                strokeWidth="1.2"
+                strokeWidth="1.3"
                 strokeLinejoin="round"
               />
               <rect
@@ -163,7 +142,7 @@ export const WindowsWindowControls: React.FC<WindowsWindowControlsProps> = ({
                 width="5.4"
                 height="5.2"
                 stroke="currentColor"
-                strokeWidth="1.2"
+                strokeWidth="1.3"
                 rx="0.8"
               />
             </svg>
@@ -176,7 +155,7 @@ export const WindowsWindowControls: React.FC<WindowsWindowControlsProps> = ({
                 width="7.2"
                 height="7.2"
                 stroke="currentColor"
-                strokeWidth="1.2"
+                strokeWidth="1.3"
                 rx="1"
               />
             </svg>
@@ -188,20 +167,14 @@ export const WindowsWindowControls: React.FC<WindowsWindowControlsProps> = ({
         <button
           type="button"
           data-daf-word="true"
+          data-raw-btn="true"
+          data-tone={effectiveIsFullScreen ? 'emerald' : undefined}
           onClick={(e) => {
             e.stopPropagation();
             effectiveFullScreenHandler(e);
           }}
           title={effectiveIsFullScreen ? restoreTitle : fullScreenTitle}
-          className={`${btnSizeClass} inline-flex items-center justify-center border-l transition-colors duration-100 cursor-pointer active:scale-95 ${
-            effectiveIsFullScreen
-              ? isDark
-                ? 'border-[#C49A6C]/20 bg-emerald-500/25 text-emerald-200 hover:bg-emerald-500/35'
-                : 'border-[#8B5A2B]/20 bg-emerald-600/20 text-emerald-900 hover:bg-emerald-600/30'
-              : isDark
-                ? 'border-[#C49A6C]/20 hover:bg-emerald-500/20 text-amber-300 hover:text-emerald-200'
-                : 'border-[#8B5A2B]/20 hover:bg-emerald-500/15 text-[#5C3A21] hover:text-emerald-900'
-          }`}
+          className={`${orbSizeClass} crystal-corner-orb cursor-pointer`}
         >
           {effectiveIsFullScreen ? (
             /* Fullscreen Exit Corners */
@@ -209,7 +182,7 @@ export const WindowsWindowControls: React.FC<WindowsWindowControlsProps> = ({
               <path
                 d="M4.5 2V4.5H2M7.5 2V4.5H10M2 7.5H4.5V10M10 7.5H7.5V10"
                 stroke="currentColor"
-                strokeWidth="1.2"
+                strokeWidth="1.3"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
@@ -220,7 +193,7 @@ export const WindowsWindowControls: React.FC<WindowsWindowControlsProps> = ({
               <path
                 d="M2 4.2V2H4.2M7.8 2H10V4.2M10 7.8V10H7.8M4.2 10H2V7.8"
                 stroke="currentColor"
-                strokeWidth="1.2"
+                strokeWidth="1.3"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
@@ -233,22 +206,20 @@ export const WindowsWindowControls: React.FC<WindowsWindowControlsProps> = ({
         <button
           type="button"
           data-daf-word="true"
+          data-raw-btn="true"
+          data-tone="rose"
           onClick={(e) => {
             e.stopPropagation();
             onClose(e);
           }}
           title={closeTitle}
-          className={`${btnSizeClass} inline-flex items-center justify-center border-l transition-colors duration-100 cursor-pointer active:scale-95 ${
-            isDark
-              ? 'border-[#C49A6C]/20 hover:bg-rose-600 hover:text-white'
-              : 'border-[#8B5A2B]/20 hover:bg-rose-600 hover:text-white'
-          }`}
+          className={`${orbSizeClass} crystal-corner-orb cursor-pointer`}
         >
           <svg width={iconSize} height={iconSize} viewBox="0 0 12 12" fill="none">
             <path
               d="M3 3L9 9M9 3L3 9"
               stroke="currentColor"
-              strokeWidth="1.3"
+              strokeWidth="1.5"
               strokeLinecap="round"
             />
           </svg>
@@ -286,21 +257,17 @@ export const WindowsMinimizedStrip: React.FC<WindowsMinimizedStripProps> = ({
   return (
     <div
       onClick={onExpand}
-      className={`w-full px-3 py-2 rounded-xl border flex items-center justify-between gap-2 cursor-pointer select-none transition-all ${
-        isDark
-          ? 'bg-gradient-to-r from-[#261910] via-[#1E140D] to-[#261910] border-[#C49A6C]/50 text-[#FAF5EB] hover:border-amber-400/70 shadow-md'
-          : 'bg-gradient-to-r from-[#F4E8D1] via-[#FAF3E3] to-[#EADBC2] border-[#8B5A2B]/50 text-[#24160D] hover:border-[#5C3A21] shadow-sm'
-      } ${className}`}
+      className={`crystal-window-shell w-full px-3 py-2 rounded-2xl flex items-center justify-between gap-2 cursor-pointer select-none transition-all ${className}`}
       title="დააწკაპუნეთ ჩაკეცილი ფანჯრის გასაშლელად"
     >
       <div className="flex items-center gap-2 min-w-0">
-        <span className="px-2 py-0.5 rounded-md text-[10px] font-black bg-amber-500/20 border border-amber-500/45 text-amber-500 shrink-0">
+        <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500/20 border border-amber-500/45 text-amber-600 dark:text-amber-300 shrink-0">
           ჩაკეცილია
         </span>
         {titleHe && (
           <span
             dir="rtl"
-            className="font-serif text-xs sm:text-sm font-black text-amber-500 dark:text-amber-300 shrink-0"
+            className="font-serif text-xs sm:text-sm font-black text-amber-700 dark:text-amber-300 shrink-0"
           >
             {titleHe}
           </span>
@@ -314,7 +281,7 @@ export const WindowsMinimizedStrip: React.FC<WindowsMinimizedStripProps> = ({
       </div>
 
       <div className="flex items-center gap-2 shrink-0">
-        <span className="text-[10.5px] font-extrabold text-amber-500 hidden sm:inline">
+        <span className="text-[10.5px] font-extrabold text-amber-600 dark:text-amber-300 hidden sm:inline">
           გაშლა ▾
         </span>
         <WindowsWindowControls
